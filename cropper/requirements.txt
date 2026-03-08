@@ -1,0 +1,52 @@
+# Core dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+transformers>=4.36.0
+accelerate>=0.25.0
+
+# Vision-Language Models
+mantis-vl>=0.0.1
+
+# CLIP
+open-clip-torch>=2.20.0
+
+# Image processing
+Pillow>=10.0.0
+opencv-python>=4.8.0
+
+# Data handling
+numpy>=1.24.0
+pandas>=2.0.0
+scipy>=1.11.0
+
+# Configuration
+PyYAML>=6.0
+omegaconf>=2.3.0
+
+# Progress bars and logging
+tqdm>=4.65.0
+rich>=13.0.0
+
+# Evaluation metrics
+scikit-learn>=1.3.0
+
+# Caching and storage
+faiss-cpu>=1.7.4
+h5py>=3.9.0
+
+# Visualization
+matplotlib>=3.7.0
+seaborn>=0.12.0
+
+# VILA aesthetic scorer (or alternative)
+# Note: VILA-R may require manual installation
+# Alternative: Use NIMA or LAION aesthetic predictor
+# pip install git+https://github.com/idealo/image-quality-assessment.git
+
+# Optional: For faster inference
+# bitsandbytes>=0.41.0
+
+# Development
+pytest>=7.0.0
+black>=23.0.0
+isort>=5.12.0

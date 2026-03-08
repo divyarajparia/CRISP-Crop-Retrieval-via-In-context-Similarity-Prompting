@@ -1,0 +1,65 @@
+# Cropper Configuration File
+# Hyperparameters for Mantis-8B-Idefics2 (reduced from Gemini settings)
+
+# Free-form cropping settings
+freeform:
+  S: 10              # number of ICL examples (30 for Gemini, 10 for Mantis)
+  T: 5               # number of GT crops per example
+  R: 5               # number of candidate crops (6 for Gemini, 5 for Mantis)
+  L: 2               # refinement iterations
+  temperature: 0.05
+  scorer: "vila+area"
+  coord_range: [1, 1000]   # coordinate normalization range
+
+# Subject-aware cropping settings
+subject_aware:
+  S: 30              # number of ICL examples
+  T: 1               # one crop per example
+  R: 5               # number of candidate crops
+  L: 10              # refinement iterations (higher for subject-aware!)
+  temperature: 0.05
+  scorer: "vila+area"
+  coord_range: [0.0, 1.0]  # normalized to 0-1
+
+# Aspect ratio-aware cropping settings
+aspect_ratio:
+  S: 10              # number of ICL examples
+  T: 1               # one crop per example
+  R: 6               # number of candidate crops
+  L: 2               # refinement iterations
+  temperature: 0.05
+  scorer: "clip"     # CLIP only for aspect-ratio task
+  coord_range: "pixel"     # pixel coordinates
+
+# Model settings
+vlm_model: "TIGER-Lab/Mantis-8B-Idefics2"
+clip_model: "ViT-B-32"
+clip_pretrained: "openai"
+
+# Scorer settings
+scorer:
+  vila_weight: 1.0
+  area_weight: 1.0
+  clip_weight: 1.0
+
+# Inference settings
+inference:
+  max_new_tokens: 256
+  batch_size: 1
+  use_fp16: true
+  device: "cuda"
+
+# Caching settings
+cache:
+  cache_dir: "./cache"
+  cache_clip_embeddings: true
+  cache_vlm_outputs: true
+
+# Logging settings
+logging:
+  log_level: "INFO"
+  save_prompts: true
+  save_intermediate_results: true
+
+# Random seed for reproducibility
+seed: 42
