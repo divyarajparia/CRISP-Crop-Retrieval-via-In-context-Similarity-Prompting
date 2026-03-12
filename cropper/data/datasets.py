@@ -48,9 +48,17 @@ class GAICDDataset(Dataset):
         self.transform = transform
         self.cache_embeddings = cache_embeddings
 
-        # Set up paths
-        self.image_dir = self.root_dir / "images"
-        self.annotation_dir = self.root_dir / "annotations"
+        # Set up paths - GAICD has split subdirectories
+        # Try both flat and split-based structures
+        if (self.root_dir / "images" / split).exists():
+            # Structure: images/train/, images/test/, images/val/
+            self.image_dir = self.root_dir / "images" / split
+            self.annotation_dir = self.root_dir / "annotations" / split
+        else:
+            # Flat structure: images/, annotations/
+            self.image_dir = self.root_dir / "images"
+            self.annotation_dir = self.root_dir / "annotations"
+
         self.split_file = self.root_dir / "splits" / f"{split}.txt"
 
         # Load image list
@@ -72,28 +80,20 @@ class GAICDDataset(Dataset):
         if self.split_file.exists():
             with open(self.split_file, "r") as f:
                 return [line.strip() for line in f.readlines() if line.strip()]
-        else:
-            # Fallback: try to load from a different structure
-            # Check for common GAICD structures
-            all_images = []
-            if self.image_dir.exists():
-                all_images = [
-                    f.stem for f in self.image_dir.glob("*.jpg")
-                ] + [
-                    f.stem for f in self.image_dir.glob("*.png")
-                ]
 
-            # If no split file, create a default split
-            if all_images:
-                n = len(all_images)
-                if self.split == "train":
-                    return all_images[:int(n * 0.8)]
-                elif self.split == "val":
-                    return all_images[int(n * 0.8):int(n * 0.9)]
-                else:  # test
-                    return all_images[int(n * 0.9):]
+        # Fallback: load all images from image_dir (which may be split-specific)
+        all_images = []
+        if self.image_dir.exists():
+            all_images = [
+                f.stem for f in self.image_dir.glob("*.jpg")
+            ] + [
+                f.stem for f in self.image_dir.glob("*.png")
+            ]
 
-            raise FileNotFoundError(f"Could not find split file or images: {self.split_file}")
+        if all_images:
+            return sorted(all_images)
+
+        raise FileNotFoundError(f"Could not find images in: {self.image_dir}")
 
     def _load_annotations(self) -> Dict[str, List[Tuple[float, int, int, int, int]]]:
         """
@@ -113,9 +113,9 @@ class GAICDDataset(Dataset):
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) >= 5:
-                            # Format: MOS x1 y1 x2 y2
-                            mos = float(parts[0])
-                            x1, y1, x2, y2 = map(int, parts[1:5])
+                            # GAICD format: x1 y1 x2 y2 score
+                            x1, y1, x2, y2 = map(int, map(float, parts[0:4]))
+                            mos = float(parts[4])
                             crops.append((mos, x1, y1, x2, y2))
             else:
                 # Try alternative annotation format (JSON)
@@ -244,29 +244,59 @@ class FCDBDataset(Dataset):
         """Load crop annotations from JSON file."""
         data = []
 
+        # Build a map of flickr_photo_id prefix to actual filename
+        image_files = {}
+        if self.root_dir.exists():
+            for img_path in self.root_dir.glob("*.jpg"):
+                # Extract the flickr_photo_id (first part before underscore)
+                flickr_id = img_path.stem.split("_")[0]
+                image_files[flickr_id] = img_path.stem
+                image_files[img_path.stem] = img_path.stem  # Also map full name
+
         if self.annotation_file.exists():
             with open(self.annotation_file, "r") as f:
                 annotations = json.load(f)
 
             for item in annotations:
-                img_id = item.get("name", item.get("id", ""))
-                crop = item.get("crop", item.get("box", {}))
+                # FCDB format: flickr_photo_id and crop as array [x1, y1, x2, y2]
+                flickr_id = str(item.get("flickr_photo_id", ""))
+                crop = item.get("crop", [0, 0, 100, 100])
+
+                # Try to extract filename from URL
+                url = item.get("url", "")
+                if url:
+                    filename = url.split("/")[-1].replace(".jpg", "")
+                    img_id = filename
+                else:
+                    # Fall back to finding by flickr_id prefix
+                    img_id = image_files.get(flickr_id, flickr_id)
+
+                # Handle crop as array [x1, y1, x2, y2] or dict
+                if isinstance(crop, list) and len(crop) >= 4:
+                    x1, y1, x2, y2 = crop[0], crop[1], crop[2], crop[3]
+                elif isinstance(crop, dict):
+                    x1 = crop.get("x1", crop.get("left", 0))
+                    y1 = crop.get("y1", crop.get("top", 0))
+                    x2 = crop.get("x2", crop.get("right", 100))
+                    y2 = crop.get("y2", crop.get("bottom", 100))
+                else:
+                    x1, y1, x2, y2 = 0, 0, 100, 100
 
                 data.append({
                     "image_id": img_id,
-                    "x1": crop.get("x1", crop.get("left", 0)),
-                    "y1": crop.get("y1", crop.get("top", 0)),
-                    "x2": crop.get("x2", crop.get("right", 100)),
-                    "y2": crop.get("y2", crop.get("bottom", 100)),
+                    "flickr_id": flickr_id,
+                    "x1": x1,
+                    "y1": y1,
+                    "x2": x2,
+                    "y2": y2,
                 })
         else:
             # Fallback: try to find images without annotations
-            if self.image_dir.exists():
-                for img_path in self.image_dir.glob("*.jpg"):
-                    data.append({
-                        "image_id": img_path.stem,
-                        "x1": 0, "y1": 0, "x2": 100, "y2": 100,
-                    })
+            for img_path in self.root_dir.glob("*.jpg"):
+                data.append({
+                    "image_id": img_path.stem,
+                    "x1": 0, "y1": 0, "x2": 100, "y2": 100,
+                })
 
         return data
 
@@ -300,17 +330,16 @@ class FCDBDataset(Dataset):
         item = self.data[idx]
         img_id = item["image_id"]
 
-        # Load image
-        img_path = self.image_dir / f"{img_id}.jpg"
+        # Load image - FCDB has images directly in root_dir
+        img_path = self.root_dir / f"{img_id}.jpg"
         if not img_path.exists():
-            img_path = self.image_dir / f"{img_id}.png"
+            img_path = self.root_dir / f"{img_id}.png"
         if not img_path.exists():
-            # Try without extension in name
-            for ext in [".jpg", ".png", ".jpeg"]:
-                candidate = self.image_dir / f"{img_id}{ext}"
-                if candidate.exists():
-                    img_path = candidate
-                    break
+            # Try searching for file starting with flickr_id
+            flickr_id = item.get("flickr_id", img_id.split("_")[0])
+            for f in self.root_dir.glob(f"{flickr_id}_*.jpg"):
+                img_path = f
+                break
 
         image = Image.open(img_path).convert("RGB")
 

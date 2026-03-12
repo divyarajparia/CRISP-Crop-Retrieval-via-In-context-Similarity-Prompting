@@ -1,0 +1,81 @@
+# ------------------------------
+# Python bytecode and caches
+# ------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Packaging / build artifacts
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# Tool caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+
+# IDE / editor
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# ------------------------------
+# Cropper project outputs
+# ------------------------------
+# Runtime caches and prompts
+cropper/cache/
+cropper/results/
+
+# Dataset embedding caches
+cropper/data/**/cache/
+cropper/data/**/*.pkl
+
+# Model and training artifacts
+cropper/**/*.pt
+cropper/**/*.pth
+cropper/**/*.ckpt
+cropper/**/*.onnx
+cropper/**/*.h5
+cropper/**/*.tfevents*
+
+# Training logs / tensorboard runs
+cropper/**/runs/
+
+# C/CUDA extension build outputs from bundled repos
+cropper/data/GAICD_repo/**/build/
+cropper/data/GAICD_repo/**/_ext/
+cropper/data/GAICD_repo/**/*.so
+cropper/data/GAICD_repo/**/*.o
+cropper/data/GAICD_repo/**/*.a
+
+# Downloaded dataset images and generated masks (large local data)
+cropper/data/GAICD/images/
+cropper/data/GAICD/annotations/
+cropper/data/SACD/images/
+cropper/data/SACD/masks/
+cropper/data/FCDB/images/
+cropper/data/FCDB/data/
+
+# Keep repository-provided metadata JSON/TXT tracked if added intentionally
+!cropper/data/GAICD/annotations/**/*.txt
+!cropper/data/GAICD/annotations/**/*.json
+
+# Local stray file seen in workspace
+cropper/=4.40.0
