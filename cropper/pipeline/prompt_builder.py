@@ -3,9 +3,12 @@ Prompt builder for Cropper VLM prompts.
 Builds exact prompts from the paper for all 3 cropping tasks.
 """
 
+import logging
 from typing import Dict, List, Optional, Tuple, Union
 
 from PIL import Image
+
+logger = logging.getLogger(__name__)
 
 
 class PromptBuilder:
@@ -79,6 +82,12 @@ Propose a different better crop with the given ratio. Output:"""
             Tuple of (prompt_text, list_of_images)
         """
         task_params = task_params or {}
+        logger.info(
+            "Building %s initial prompt with %d ICL examples for query size=%s",
+            self.task,
+            len(icl_examples),
+            query_image.size,
+        )
 
         if self.task == "freeform":
             return self._build_freeform_initial(icl_examples, query_image)
@@ -121,6 +130,11 @@ Propose a different better crop with the given ratio. Output:"""
             Tuple of (prompt_text, list_of_images)
         """
         task_params = task_params or {}
+        logger.info(
+            "Building %s refinement prompt with %d crop candidates",
+            self.task,
+            len(crop_images),
+        )
 
         if self.task == "freeform":
             return self._build_freeform_refinement(
@@ -157,7 +171,7 @@ Propose a different better crop with the given ratio. Output:"""
             # Format crops as (s, x1, y1, x2, y2)
             crops = example.get("crops", [])
             crop_strs = []
-            for crop in crops[:3]:  # Limit to top 3 for clarity
+            for crop in crops:
                 if len(crop) == 5:
                     mos, x1, y1, x2, y2 = crop
                     # Normalize MOS to 0-1 range (GAICD uses 1-5 scale)
@@ -173,10 +187,18 @@ Propose a different better crop with the given ratio. Output:"""
         # Add query image
         images.append(query_image)
 
+        logger.info(
+            "Freeform prompt contains %d example images and %d total GT crops",
+            len(icl_examples),
+            sum(len(example.get("crops", [])) for example in icl_examples),
+        )
+
         examples_text = "\n".join(example_lines)
         prompt = self.FREEFORM_INITIAL_TEMPLATE.format(
             examples=examples_text,
         )
+
+        logger.debug("Freeform initial prompt length: %d chars", len(prompt))
 
         return prompt, images
 
@@ -242,6 +264,13 @@ Propose a different better crop with the given ratio. Output:"""
 
         images.append(query_image)
 
+        logger.info(
+            "Subject-aware prompt contains %d examples; query mask center=(%.3f, %.3f)",
+            len(icl_examples),
+            mask_center[0],
+            mask_center[1],
+        )
+
         examples_text = "\n".join(example_lines)
         prompt = self.SUBJECT_AWARE_INITIAL_TEMPLATE.format(
             examples=examples_text,
@@ -249,6 +278,8 @@ Propose a different better crop with the given ratio. Output:"""
             cx=f"{mask_center[0]:.2f}",
             cy=f"{mask_center[1]:.2f}",
         )
+
+        logger.debug("Subject-aware initial prompt length: %d chars", len(prompt))
 
         return prompt, images
 
@@ -315,6 +346,13 @@ Propose a different better crop with the given ratio. Output:"""
         images.append(query_image)
         qw, qh = query_image.size
 
+        logger.info(
+            "Aspect-ratio prompt contains %d examples; target ratio=%.4f; R=%d",
+            len(icl_examples),
+            aspect_ratio,
+            R,
+        )
+
         examples_text = "\n".join(example_lines)
         prompt = self.ASPECT_RATIO_INITIAL_TEMPLATE.format(
             examples=examples_text,
@@ -324,6 +362,8 @@ Propose a different better crop with the given ratio. Output:"""
             ratio=f"{aspect_ratio:.2f}",
             R=R,
         )
+
+        logger.debug("Aspect-ratio initial prompt length: %d chars", len(prompt))
 
         return prompt, images
 

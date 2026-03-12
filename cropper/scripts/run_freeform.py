@@ -170,6 +170,7 @@ def main():
         task="freeform",
         device=args.device,
         scorer_config=task_config.get("scorer", "vila+area"),
+        require_exact_components=True,
     )
 
     # Create Cropper

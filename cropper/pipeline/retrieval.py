@@ -60,6 +60,11 @@ def retrieve_icl_examples(
 
     retrieved_ids = [img_id for img_id, score in top_s_results]
     logger.info(f"Retrieved {len(retrieved_ids)} images for ICL")
+    if top_s_results:
+        preview = ", ".join(
+            f"{img_id}:{score:.4f}" for img_id, score in top_s_results[: min(5, len(top_s_results))]
+        )
+        logger.info("Top retrieved examples: %s", preview)
 
     # Step 2: Select best crop(s) using G (task-specific)
     if task == "freeform":
@@ -112,6 +117,12 @@ def _select_freeform_examples(
             "crops": crops,  # List of (MOS, x1, y1, x2, y2)
         })
 
+    logger.info(
+        "Selected %d freeform ICL examples with up to T=%d crops each",
+        len(examples),
+        T,
+    )
+
     return examples
 
 
@@ -162,6 +173,13 @@ def _select_subject_aware_examples(
                 "crop": best_subject["crop"],  # (x1, y1, x2, y2) normalized
             })
 
+    logger.info(
+        "Selected %d subject-aware ICL examples for query center=(%.3f, %.3f)",
+        len(examples),
+        query_mask_center[0],
+        query_mask_center[1],
+    )
+
     return examples
 
 
@@ -201,6 +219,11 @@ def _select_aspect_ratio_examples(
 
     # Sort by aspect ratio similarity (closest first)
     examples.sort(key=lambda x: abs(x["aspect_ratio"] - target_aspect_ratio))
+    logger.info(
+        "Selected %d aspect-ratio ICL examples for target ratio=%.4f",
+        len(examples),
+        target_aspect_ratio,
+    )
 
     return examples
 

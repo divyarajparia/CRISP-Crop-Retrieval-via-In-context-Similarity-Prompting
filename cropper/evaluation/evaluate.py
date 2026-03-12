@@ -30,6 +30,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _log_runtime_environment(args):
+    """Log enough runtime state to diagnose environment-dependent runs."""
+    logger.info("Runtime cwd: %s", os.getcwd())
+    logger.info("Config path: %s", args.config)
+    logger.info("Data dir: %s", args.data_dir)
+    logger.info("Output dir: %s", args.output_dir)
+    logger.info("CUDA_VISIBLE_DEVICES=%s", os.environ.get("CUDA_VISIBLE_DEVICES", "<unset>"))
+
+    try:
+        import torch
+
+        logger.info("torch version: %s", torch.__version__)
+        logger.info("torch.cuda.is_available=%s", torch.cuda.is_available())
+        logger.info("torch.cuda.device_count=%d", torch.cuda.device_count())
+        if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+            logger.info("torch current device index=%d", torch.cuda.current_device())
+            logger.info("torch current device name=%s", torch.cuda.get_device_name(torch.cuda.current_device()))
+    except Exception as exc:
+        logger.warning("Could not log torch CUDA environment: %s", exc)
+
+
 def evaluate_freeform(
     cropper: Cropper,
     dataset: GAICDDataset,
@@ -360,6 +381,7 @@ def main():
     )
 
     args = parser.parse_args()
+    _log_runtime_environment(args)
 
     # Create output directory
     output_dir = Path(args.output_dir)
@@ -378,6 +400,7 @@ def main():
             device=args.device,
             task="freeform",
             database=GAICDDataset(data_dir / "GAICD", split="train"),
+            require_exact_components=True,
         )
 
         evaluate_freeform(
@@ -397,6 +420,7 @@ def main():
             device=args.device,
             task="subject_aware",
             database=SACDDataset(data_dir / "SACD", split="train"),
+            require_exact_components=True,
         )
 
         evaluate_subject_aware(

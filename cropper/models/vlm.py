@@ -78,7 +78,7 @@ class MantisVLM(BaseVLM):
         model_name: str = "TIGER-Lab/Mantis-8B-Idefics2",
         device: str = "cuda",
         use_fp16: bool = True,
-        max_images: int = 10,
+        max_images: Optional[int] = None,
     ):
         """
         Initialize Mantis VLM.
@@ -87,7 +87,8 @@ class MantisVLM(BaseVLM):
             model_name: HuggingFace model name
             device: Device to load model on
             use_fp16: Whether to use float16 precision
-            max_images: Maximum number of images in context
+            max_images: Optional maximum number of images in context.
+                If None, do not truncate the prompt images.
         """
         self.model_name = model_name
         self.device = device
@@ -178,8 +179,17 @@ class MantisVLM(BaseVLM):
     ) -> str:
         """Generate text output given images and a prompt."""
 
-        # Limit number of images
-        if len(images) > self.max_images:
+        logger.info(
+            "VLM generate request: images=%d, prompt_chars=%d, temperature=%.3f, max_new_tokens=%d",
+            len(images),
+            len(prompt),
+            temperature,
+            max_new_tokens,
+        )
+        logger.debug("VLM prompt preview: %s", prompt[:500])
+
+        # Limit number of images only when explicitly configured.
+        if self.max_images is not None and len(images) > self.max_images:
             logger.warning(
                 f"Number of images ({len(images)}) exceeds max ({self.max_images}). "
                 "Truncating to max_images."
@@ -226,6 +236,7 @@ class MantisVLM(BaseVLM):
                 generated_text = parts[-1].strip()
 
             logger.debug(f"VLM raw output: {repr(generated_text[:200])}")
+            logger.info("VLM generation complete: output_chars=%d", len(generated_text))
             return generated_text
 
         except Exception as e:

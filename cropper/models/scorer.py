@@ -41,7 +41,12 @@ class VILAScorer(BaseScorer):
     Falls back to NIMA or LAION aesthetic predictor if VILA-R is unavailable.
     """
 
-    def __init__(self, device: str = "cuda", model_path: Optional[str] = None):
+    def __init__(
+        self,
+        device: str = "cuda",
+        model_path: Optional[str] = None,
+        require_vila: bool = False,
+    ):
         """
         Initialize VILA scorer.
 
@@ -51,6 +56,7 @@ class VILAScorer(BaseScorer):
         """
         self.device = device
         self.model_path = model_path
+        self.require_vila = require_vila
         self.model = None
         self.transform = None
         self.scorer_type = None
@@ -59,16 +65,26 @@ class VILAScorer(BaseScorer):
 
     def _load_model(self):
         """Try to load aesthetic scorers in order of preference."""
+        logger.info("Initializing VILA scorer (require_vila=%s)", self.require_vila)
         # Try VILA-R first (best if available)
         if self._try_load_vila():
+            logger.info("Aesthetic scorer backend selected: VILA-R")
             return
+
+        if self.require_vila:
+            raise RuntimeError(
+                "VILA-R scorer is required for this run, but it could not be loaded. "
+                "Install the required VILA dependencies and verify the VILA weights are available."
+            )
 
         # Try LAION aesthetic predictor (we have pretrained weights)
         if self._try_load_laion():
+            logger.warning("Aesthetic scorer backend selected: LAION fallback")
             return
 
         # Try NIMA (fallback, but has random head)
         if self._try_load_nima():
+            logger.warning("Aesthetic scorer backend selected: NIMA fallback")
             return
 
         # Fall back to simple scoring
@@ -646,6 +662,7 @@ def create_scorer(
     task: str = "freeform",
     device: str = "cuda",
     scorer_config: Optional[str] = None,
+    require_exact_components: bool = False,
 ) -> CombinedScorer:
     """
     Factory function to create a scorer for a task.
@@ -654,6 +671,8 @@ def create_scorer(
         task: Task type ('freeform', 'subject_aware', 'aspect_ratio')
         device: Device to run models on
         scorer_config: Scorer configuration string (e.g., "vila+area")
+        require_exact_components: If True, fail instead of silently falling back
+            when a requested scorer backend is unavailable.
 
     Returns:
         Combined scorer instance
@@ -668,14 +687,25 @@ def create_scorer(
             scorer_config = "clip"
 
     config_parts = scorer_config.lower().split("+")
+    logger.info(
+        "Creating scorer for task=%s with config=%s (require_exact_components=%s)",
+        task,
+        scorer_config,
+        require_exact_components,
+    )
 
     if "vila" in config_parts:
-        scorers["vila"] = VILAScorer(device=device)
+        scorers["vila"] = VILAScorer(
+            device=device,
+            require_vila=require_exact_components,
+        )
 
     if "clip" in config_parts:
         scorers["clip"] = CLIPContentScorer(device=device)
 
     if "area" in config_parts:
         scorers["area"] = AreaScorer()
+
+    logger.info("Scorer components initialized: %s", ", ".join(sorted(scorers.keys())))
 
     return CombinedScorer(scorers, task=task)

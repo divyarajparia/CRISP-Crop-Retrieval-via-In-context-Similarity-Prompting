@@ -61,6 +61,8 @@ class Cropper:
         self.database = database
         self.config = config or {}
 
+#### Prompt Builders ####
+
         # Prompt builders for each task
         self.prompt_builders = {
             "freeform": PromptBuilder(task="freeform"),
@@ -125,6 +127,8 @@ class Cropper:
             task_params["aspect_ratio"] = aspect_ratio or 1.0
             task_params["R"] = R
 
+
+#### Retieve ICL Samples ####
         # Step 1: Retrieve ICL examples
         logger.info("Step 1: Retrieving ICL examples...")
         icl_examples = retrieve_icl_examples(
@@ -148,6 +152,8 @@ class Cropper:
 
         logger.info(f"  Retrieved {len(icl_examples)} ICL examples")
 
+
+### Building Prompt for VLM #######
         # Step 2: Build initial prompt
         logger.info("Step 2: Building initial prompt...")
         prompt_builder = self.prompt_builders[task]
@@ -181,6 +187,9 @@ class Cropper:
 
         logger.info(f"  Generated {len(initial_crops)} initial crop candidates")
 
+
+        #### refining with VILA ####
+        
         # Step 4: Run iterative refinement
         logger.info("Step 4: Running iterative refinement...")
         result = iterative_refinement(
@@ -282,6 +291,7 @@ def create_cropper(
     device: str = "cuda",
     task: str = "freeform",
     database=None,
+    require_exact_components: bool = False,
 ) -> Cropper:
     """
     Factory function to create a Cropper instance.
@@ -291,6 +301,8 @@ def create_cropper(
         device: Device to run models on
         task: Default cropping task
         database: Dataset for ICL examples
+        require_exact_components: If True, fail instead of silently falling back
+            when a requested scorer backend is unavailable.
 
     Returns:
         Configured Cropper instance
@@ -331,7 +343,12 @@ def create_cropper(
     # Create scorer
     task_config = config.get(task, {})
     scorer_config = task_config.get("scorer", "vila+area")
-    scorer = create_scorer(task=task, device=device, scorer_config=scorer_config)
+    scorer = create_scorer(
+        task=task,
+        device=device,
+        scorer_config=scorer_config,
+        require_exact_components=require_exact_components,
+    )
 
     # Create Cropper
     return Cropper(
