@@ -17,19 +17,16 @@ class PromptBuilder:
     Supports free-form, subject-aware, and aspect-ratio-aware cropping.
     """
 
-    # Prompt templates optimized for Mantis/Idefics2
-    FREEFORM_INITIAL_TEMPLATE = """Task: Find aesthetic crop regions in images.
-Format: (score, x1, y1, x2, y2) where score is 0.0-1.0, coordinates are 1-1000.
-
-Here are example images with their best crops:
+    # Free-form templates follow the wording and structure of Table 1 as closely
+    # as possible from the paper text extraction, while remaining robust for Mantis.
+    FREEFORM_INITIAL_TEMPLATE = """Localize the aesthetic part of the image. (s, x1, y1, x2, y2) represents the region. x1 and x2 are the left and right most positions, normalized into 1 to 1000, where 1 is the left and 1000 is the right. y1 and y2 are the top and bottom positions, normalized into 1 to 1000 where 1 is the top and 1000 is the bottom. s is MOS score. We provide several images here.
 {examples}
-
-Now analyze the LAST image shown and output 5 aesthetic crop regions in the same format.
-Only output the coordinates, nothing else:"""
+{{Query image}}
+Output {R} crops represented by (s, x1, y1, x2, y2). Only output crop tuples."""
 
     FREEFORM_REFINEMENT_TEMPLATE = """{initial_prompt}
 {crop_feedback}
-Propose similar crop that has high score. The region should be represented by (s, x1, y1, x2, y2)."""
+Propose similar crop that has high score. The region should be represented by (s, x1, y1, x2, y2). Only output the new crop tuples."""
 
     SUBJECT_AWARE_INITIAL_TEMPLATE = """Find visually appealing crop. Each region is represented by (x1, y1, x2, y2) coordinates. x1, x2 are the left and right most positions, normalized into 0 to 1, where 0 is the left and 1 is the right. y1, y2 are the top and bottom positions, normalized into 0 to 1 where 0 is the top and 1 is the bottom.
 {examples}
@@ -90,7 +87,8 @@ Propose a different better crop with the given ratio. Output:"""
         )
 
         if self.task == "freeform":
-            return self._build_freeform_initial(icl_examples, query_image)
+            R = task_params.get("R", 6)
+            return self._build_freeform_initial(icl_examples, query_image, R)
 
         elif self.task == "subject_aware":
             mask_center = task_params.get("mask_center", (0.5, 0.5))
@@ -160,6 +158,7 @@ Propose a different better crop with the given ratio. Output:"""
         self,
         icl_examples: List[Dict],
         query_image: Image.Image,
+        R: int,
     ) -> Tuple[str, List[Image.Image]]:
         """Build free-form cropping initial prompt."""
         images = []
@@ -182,7 +181,7 @@ Propose a different better crop with the given ratio. Output:"""
                     crop_strs.append(f"(0.80, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)})")
 
             crop_str = ", ".join(crop_strs)
-            example_lines.append(f"Image {i+1}: {crop_str}")
+            example_lines.append(f"{{image {i+1}}}, {crop_str}")
 
         # Add query image
         images.append(query_image)
@@ -196,6 +195,7 @@ Propose a different better crop with the given ratio. Output:"""
         examples_text = "\n".join(example_lines)
         prompt = self.FREEFORM_INITIAL_TEMPLATE.format(
             examples=examples_text,
+            R=R,
         )
 
         logger.debug("Freeform initial prompt length: %d chars", len(prompt))

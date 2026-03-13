@@ -54,6 +54,8 @@ cropper/**/*.ckpt
 cropper/**/*.onnx
 cropper/**/*.h5
 cropper/**/*.tfevents*
+cropper/weights/vila_rank_tuned/
+cropper/weights/*.model
 
 # Training logs / tensorboard runs
 cropper/**/runs/

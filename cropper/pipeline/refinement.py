@@ -194,13 +194,14 @@ def iterative_refinement(
     all_scores.append(list(final_scores))
 
     # Select final crop based on task
-    if task == "aspect_ratio":
-        # For aspect-ratio: return highest-scoring crop across all iterations
+    if task in ["freeform", "aspect_ratio"]:
+        # For free-form and aspect-ratio, keep the best crop seen across all
+        # iterations rather than forcing the final iteration to win.
         best_crop, best_score = _select_best_across_iterations(
             all_iterations, all_scores
         )
     else:
-        # For free-form and subject-aware: return from final iteration
+        # For subject-aware: return from final iteration
         best_idx = final_scores.index(max(final_scores))
         best_crop = current_crops[best_idx]
         best_score = final_scores[best_idx]

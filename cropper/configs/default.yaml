@@ -1,11 +1,11 @@
 # Cropper Configuration File
-# Hyperparameters for Mantis-8B-Idefics2 (reduced from Gemini settings)
+# Hyperparameters matching paper Table 9 (Mantis-8B-Idefics2 setting)
 
 # Free-form cropping settings
 freeform:
-  S: 10              # number of ICL examples (30 for Gemini, 10 for Mantis)
+  S: 30              # number of ICL examples (paper: 30)
   T: 5               # number of GT crops per example
-  R: 5               # number of candidate crops (6 for Gemini, 5 for Mantis)
+  R: 6               # number of candidate crops (paper: 6)
   L: 2               # refinement iterations
   temperature: 0.05
   scorer: "vila+area"

@@ -123,6 +123,9 @@ class Cropper:
                 mask_center = self._compute_mask_center(mask)
             task_params["mask_center"] = mask_center or (0.5, 0.5)
 
+        elif task == "freeform":
+            task_params["R"] = R
+
         elif task == "aspect_ratio":
             task_params["aspect_ratio"] = aspect_ratio or 1.0
             task_params["R"] = R
