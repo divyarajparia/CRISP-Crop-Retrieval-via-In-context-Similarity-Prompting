@@ -152,8 +152,10 @@ class VILAScorer(BaseScorer):
             model_p.model_dims = coca_config.model_dims
             model = model_p.Instantiate()
 
-            # Initialize model
-            dummy_batch_size = 1
+            # Keep this >=2 to avoid a zero denominator in VILA's
+            # contrastive-loss setup during abstract initialization.
+            # The official VILA example uses 4.
+            dummy_batch_size = 4
             text_shape = (dummy_batch_size, 1, _MAX_TEXT_LEN)
             image_shape = (dummy_batch_size, _IMAGE_SIZE, _IMAGE_SIZE, 3)
             input_specs = NestedMap(
@@ -401,8 +403,9 @@ class VILAScorer(BaseScorer):
                 )
                 quality_scores = predictions['quality_scores']
 
-            # Extract score (already in [0, 1] range)
-            score = float(quality_scores[0])
+            # Extract score (already in [0, 1] range). VILA may return shapes
+            # like (1,) or (1, 1), so squeeze before conversion.
+            score = float(np.asarray(quality_scores).squeeze())
             score = max(0.0, min(1.0, score))
 
             return score

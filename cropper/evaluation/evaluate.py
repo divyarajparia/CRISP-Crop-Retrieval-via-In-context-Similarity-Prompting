@@ -22,6 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from data.datasets import GAICDDataset, FCDBDataset, SACDDataset
 from pipeline.cropper import create_cropper, Cropper
 from evaluation.metrics import MetricsCalculator, format_results_table, compute_iou
+from utils.visualization import draw_crop_box
 
 logging.basicConfig(
     level=logging.INFO,
@@ -57,6 +58,7 @@ def evaluate_freeform(
     output_dir: Path,
     max_samples: Optional[int] = None,
     resume_from: Optional[str] = None,
+    save_crops: bool = False,
 ) -> Dict[str, float]:
     """
     Evaluate free-form cropping on GAICD dataset.
@@ -135,6 +137,24 @@ def evaluate_freeform(
                 "iou": iou,
                 "score": result.get("final_score", 0),
             })
+
+            # Save crop visualization
+            if save_crops:
+                crops_dir = output_dir / "crops"
+                crops_dir.mkdir(exist_ok=True)
+                # Draw GT (green) and pred (red) on original
+                vis = draw_crop_box(image, gt_box, color="green", width=3, label=f"GT IoU={iou:.2f}")
+                vis = draw_crop_box(vis, pred_box, color="red", width=3, label="Pred")
+                # Tight crop
+                tight = image.crop(pred_box)
+                # Side-by-side: annotated original | tight crop
+                aw, ah = vis.size
+                tw, th = tight.size
+                combined_h = max(ah, th)
+                combined = Image.new("RGB", (aw + 10 + tw, combined_h), "white")
+                combined.paste(vis, (0, (combined_h - ah) // 2))
+                combined.paste(tight, (aw + 10, (combined_h - th) // 2))
+                combined.save(crops_dir / f"{image_id}.jpg", quality=90)
 
             pbar.set_postfix({"IoU": f"{iou:.3f}", "Avg_IoU": f"{sum(r['iou'] for r in results)/len(results):.3f}"})
 
@@ -379,6 +399,12 @@ def main():
         default=None,
         help="Path to checkpoint to resume from",
     )
+    parser.add_argument(
+        "--save_crops",
+        action="store_true",
+        default=False,
+        help="Save crop visualizations (original with GT/pred boxes + tight crop) to output_dir/crops/",
+    )
 
     args = parser.parse_args()
     _log_runtime_environment(args)
@@ -409,6 +435,7 @@ def main():
             output_dir=output_dir,
             max_samples=args.max_samples,
             resume_from=args.resume,
+            save_crops=args.save_crops,
         )
 
     if args.task in ["subject_aware", "all"]:
