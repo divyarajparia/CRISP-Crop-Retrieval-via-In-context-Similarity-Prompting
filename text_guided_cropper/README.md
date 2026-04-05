@@ -1,7 +1,7 @@
 # Text-Guided Cropping — CRISP Task 2
 
 Part of the **CRISP** project (*Crop Retrieval via In-Context Similarity Prompting*),
-a reimplementation of [Cropper (CVPR 2025)](https://arxiv.org/abs/2404.02510) using
+a reimplementation of [Cropper (CVPR 2025)](https://openaccess.thecvf.com/content/CVPR2025/papers/Lee_Cropper_Vision-Language_Model_for_Image_Cropping_through_In-Context_Learning_CVPR_2025_paper.pdf) using
 open-source models.
 
 ---
