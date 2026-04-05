@@ -1,0 +1,18 @@
+# Core
+torch>=2.0.0
+Pillow>=9.0.0
+numpy>=1.23.0
+
+# CLIP retrieval (optional but strongly recommended)
+open_clip_torch>=2.20.0
+
+# VLM support – needed when --vlm is set
+# transformers>=4.40.0
+# accelerate>=0.28.0      # required for --quant (device_map="auto")
+
+# 4-bit / 8-bit quantization for 8 GB VRAM (--quant 4 or --quant 8)
+# bitsandbytes>=0.43.0
+
+# Logging / utilities
+tqdm>=4.65.0
+PyYAML>=6.0
