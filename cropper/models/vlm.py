@@ -117,6 +117,7 @@ class MantisVLM(BaseVLM):
                 torch_dtype=dtype,
                 device_map="auto",
                 trust_remote_code=True,
+                attn_implementation="flash_attention_2",
             )
 
             self.model.eval()

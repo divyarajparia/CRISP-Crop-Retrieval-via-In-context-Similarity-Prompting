@@ -92,27 +92,115 @@ class VILAScorer(BaseScorer):
         self.scorer_type = "heuristic"
 
     def _try_load_vila(self) -> bool:
-        """Try to load VILA model using TensorFlow Hub."""
+        """Try to load VILA-R model using JAX/Flax checkpoint."""
         try:
-            import tensorflow as tf
-            import tensorflow_hub as hub
+            from pathlib import Path
+            import jax
+            import jax.numpy as jnp
 
-            logger.info("Attempting to load VILA model from TensorFlow Hub...")
+            logger.info("Attempting to load VILA-R model...")
 
-            # Load VILA model from TFHub
-            model_handle = 'https://tfhub.dev/google/vila/image/1'
-            self.vila_model = hub.load(model_handle)
-            self.vila_predict_fn = self.vila_model.signatures['serving_default']
+            # Check for local checkpoint
+            local_paths = [
+                Path(__file__).parent.parent / "weights" / "vila_rank_tuned",
+                Path("/data1/es22btech11013/divya/AFCIL/divya/cv-project/cropper/weights/vila_rank_tuned"),
+            ]
+
+            ckpt_dir = None
+            for local_path in local_paths:
+                if local_path.exists() and (local_path / "checkpoint_0").exists():
+                    ckpt_dir = str(local_path)
+                    break
+
+            if ckpt_dir is None:
+                logger.debug("VILA-R checkpoint not found")
+                return False
+
+            logger.info(f"Loading VILA-R from: {ckpt_dir}")
+
+            # Import VILA model components
+            from lingvo.core import py_utils
+            from paxml import checkpoints
+            from paxml import learners
+            from paxml import tasks_lib
+            from praxis import base_layer
+            from praxis import optimizers
+            from praxis import pax_fiddle
+            from praxis import schedules
+
+            # Import VILA config
+            import sys
+            vila_path = Path(__file__).parent / "vila"
+            sys.path.insert(0, str(vila_path.parent))
+
+            from models.vila import coca_vila
+            from models.vila import coca_vila_configs
+
+            NestedMap = py_utils.NestedMap
+
+            # VILA constants
+            _IMAGE_SIZE = 224
+            _MAX_TEXT_LEN = 64
+            _TEXT_VOCAB_SIZE = 64000
+
+            # Build model
+            coca_config = coca_vila_configs.CocaVilaConfig()
+            coca_config.model_type = coca_vila.CoCaVilaRankBasedFinetune
+            coca_config.decoding_max_len = _MAX_TEXT_LEN
+            coca_config.text_vocab_size = _TEXT_VOCAB_SIZE
+            model_p = coca_vila_configs.build_coca_vila_model(coca_config)
+            model_p.model_dims = coca_config.model_dims
+            model = model_p.Instantiate()
+
+            # Keep this >=2 to avoid a zero denominator in VILA's
+            # contrastive-loss setup during abstract initialization.
+            # The official VILA example uses 4.
+            dummy_batch_size = 4
+            text_shape = (dummy_batch_size, 1, _MAX_TEXT_LEN)
+            image_shape = (dummy_batch_size, _IMAGE_SIZE, _IMAGE_SIZE, 3)
+            input_specs = NestedMap(
+                ids=jax.ShapeDtypeStruct(shape=text_shape, dtype=jnp.int32),
+                image=jax.ShapeDtypeStruct(shape=image_shape, dtype=jnp.float32),
+                paddings=jax.ShapeDtypeStruct(shape=text_shape, dtype=jnp.float32),
+                labels=jax.ShapeDtypeStruct(shape=text_shape, dtype=jnp.float32),
+                regression_labels=jax.ShapeDtypeStruct(
+                    shape=(dummy_batch_size, 10), dtype=jnp.float32
+                ),
+            )
+            vars_weight_params = model.abstract_init_with_metadata(input_specs)
+
+            # Learner for initialization
+            learner_p = pax_fiddle.Config(learners.Learner)
+            learner_p.name = 'learner'
+            learner_p.optimizer = pax_fiddle.Config(
+                optimizers.ShardedAdafactor,
+                decay_method='adam',
+                lr_schedule=pax_fiddle.Config(schedules.Constant),
+            )
+            learner = learner_p.Instantiate()
+
+            # Load checkpoint
+            train_state_global_shapes = tasks_lib.create_state_unpadded_shapes(
+                vars_weight_params, discard_opt_states=False, learners=[learner]
+            )
+            model_states = checkpoints.restore_checkpoint(
+                train_state_global_shapes, ckpt_dir
+            )
+
+            self.vila_model = model
+            self.vila_model_states = model_states
+            self.vila_image_size = _IMAGE_SIZE
+            self.vila_max_text_len = _MAX_TEXT_LEN
             self.scorer_type = "vila"
 
-            logger.info("VILA scorer loaded successfully from TensorFlow Hub!")
+            logger.info("VILA-R scorer loaded successfully!")
             return True
 
         except ImportError as e:
-            logger.debug(f"TensorFlow/TFHub not available: {e}")
+            logger.debug(f"VILA dependencies not available: {e}")
             return False
         except Exception as e:
-            logger.warning(f"Could not load VILA from TFHub: {e}")
+            logger.warning(f"Could not load VILA-R: {e}")
             import traceback
             logger.debug(traceback.format_exc())
             return False
@@ -270,31 +358,60 @@ class VILAScorer(BaseScorer):
         return float(score)
 
     def _vila_score(self, image: Image.Image) -> float:
-        """Score using VILA aesthetic predictor (TensorFlow Hub version)."""
+        """Score using VILA-R aesthetic predictor (JAX/Flax version)."""
         try:
-            import tensorflow as tf
-            from io import BytesIO
+            import jax.numpy as jnp
+            from praxis import base_layer
+            from lingvo.core import py_utils
 
-            # Convert PIL Image to bytes (VILA TFHub expects JPEG/PNG bytes)
-            buffer = BytesIO()
-            # Ensure RGB format
-            if image.mode != 'RGB':
-                image = image.convert('RGB')
-            image.save(buffer, format='JPEG', quality=95)
-            image_bytes = buffer.getvalue()
+            NestedMap = py_utils.NestedMap
+
+            # Preprocess image for VILA
+            # VILA expects 224x224 RGB images normalized to [0, 1]
+            # First resize with aspect-preserving crop
+            pre_crop_size = 272
+            img = image.resize((pre_crop_size, pre_crop_size), Image.LANCZOS)
+
+            # Center crop to 224x224
+            left = (pre_crop_size - self.vila_image_size) // 2
+            top = (pre_crop_size - self.vila_image_size) // 2
+            right = left + self.vila_image_size
+            bottom = top + self.vila_image_size
+            img = img.crop((left, top, right, bottom))
+
+            # Convert to array
+            img_array = np.array(img).astype(np.float32) / 255.0
+            img_array = np.clip(img_array, 0.0, 1.0)
+
+            # Add batch dimension
+            img_batch = jnp.expand_dims(img_array, axis=0)
+
+            # Create input batch
+            input_batch = NestedMap(
+                image=img_batch,
+                ids=jnp.zeros((1, 1, self.vila_max_text_len), dtype=jnp.int32),
+                paddings=jnp.zeros((1, 1, self.vila_max_text_len), dtype=jnp.int32),
+            )
 
             # Run inference
-            prediction = self.vila_predict_fn(tf.constant(image_bytes))
-            quality_score = prediction['predictions']
+            context_p = base_layer.JaxContext.HParams(do_eval=True)
+            with base_layer.JaxContext(context_p):
+                predictions = self.vila_model.apply(
+                    {'params': self.vila_model_states.mdl_vars['params']},
+                    input_batch,
+                    method=self.vila_model.compute_predictions,
+                )
+                quality_scores = predictions['quality_scores']
 
-            # Extract score (already in [0, 1] range)
-            score = float(quality_score.numpy().squeeze())
+            # Extract score (already in [0, 1] range). VILA may return shapes
+            # like (1,) or (1, 1), so squeeze before conversion.
+            score = float(np.asarray(quality_scores).squeeze())
             score = max(0.0, min(1.0, score))
 
             return score
 
         except Exception as e:
-            logger.warning(f"VILA scoring failed: {e}, falling back to LAION/heuristic")
+            logger.warning(f"VILA-R scoring failed: {e}, falling back to LAION/heuristic")
             # Try LAION fallback if available
             if hasattr(self, 'aesthetic_head') and self.aesthetic_head is not None:
                 return self._laion_score(image)
