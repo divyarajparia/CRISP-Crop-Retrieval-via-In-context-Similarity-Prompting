@@ -18,21 +18,30 @@ class BaseScorer(ABC):
     """Abstract base class for scorers."""
 
     @abstractmethod
-    def score(self, image: Image.Image) -> float:
+    def score(self, image: Image.Image, crop_box: Optional[Tuple[int, int, int, int]] = None) -> float:
         """
         Score an image.
 
         Args:
             image: PIL Image to score
+            crop_box: Optional (x1, y1, x2, y2) of this crop in the original
+                image's pixel space. Most scorers ignore this; the
+                GaicdCalibrationScorer uses it to compute geometry features.
 
         Returns:
             Score in [0, 1] range
         """
         raise NotImplementedError
 
-    def score_batch(self, images: List[Image.Image]) -> List[float]:
+    def score_batch(
+        self,
+        images: List[Image.Image],
+        crop_boxes: Optional[List[Tuple[int, int, int, int]]] = None,
+    ) -> List[float]:
         """Score multiple images."""
-        return [self.score(img) for img in images]
+        if crop_boxes is None:
+            return [self.score(img) for img in images]
+        return [self.score(img, box) for img, box in zip(images, crop_boxes)]
 
 
 class VILAScorer(BaseScorer):
@@ -313,8 +322,10 @@ class VILAScorer(BaseScorer):
             return False
 
     @torch.no_grad()
-    def score(self, image: Image.Image) -> float:
+    def score(self, image: Image.Image, crop_box: Optional[Tuple[int, int, int, int]] = None) -> float:
         """Score image aesthetics."""
+        # crop_box is accepted for interface compatibility with BaseScorer; VILA
+        # only looks at the cropped pixels.
         if self.scorer_type == "vila":
             return self._vila_score(image)
 
@@ -500,12 +511,13 @@ class CLIPContentScorer(BaseScorer):
             self.original_embedding = self.original_embedding / self.original_embedding.norm()
 
     @torch.no_grad()
-    def score(self, image: Image.Image) -> float:
+    def score(self, image: Image.Image, crop_box: Optional[Tuple[int, int, int, int]] = None) -> float:
         """
         Score content preservation of a crop.
 
         Args:
             image: Cropped image
+            crop_box: Ignored; accepted for BaseScorer interface compatibility.
 
         Returns:
             Cosine similarity to original [0, 1]
@@ -542,12 +554,13 @@ class AreaScorer(BaseScorer):
         """Set original image size."""
         self.original_size = size
 
-    def score(self, image: Image.Image) -> float:
+    def score(self, image: Image.Image, crop_box: Optional[Tuple[int, int, int, int]] = None) -> float:
         """
         Score based on area ratio.
 
         Args:
             image: Cropped image
+            crop_box: Ignored; accepted for BaseScorer interface compatibility.
 
         Returns:
             Area ratio in [0, 1]
@@ -632,13 +645,22 @@ class CombinedScorer:
             self.scorers["clip"].set_original(original_image)
         if "area" in self.scorers:
             self.scorers["area"].set_original_size(original_image.size)
+        if "gaicd_cal" in self.scorers:
+            self.scorers["gaicd_cal"].set_original(original_image)
 
-    def score(self, crop_image: Image.Image) -> float:
+    def score(
+        self,
+        crop_image: Image.Image,
+        crop_box: Optional[Tuple[int, int, int, int]] = None,
+    ) -> float:
         """
         Compute combined score for a crop.
 
         Args:
             crop_image: Cropped image
+            crop_box: Optional (x1, y1, x2, y2) of this crop in the original
+                image's pixel space. Forwarded to component scorers; only
+                GaicdCalibrationScorer uses it (for geometry features).
 
         Returns:
             Combined score in [0, 1]
@@ -648,7 +670,7 @@ class CombinedScorer:
         for name, scorer in self.scorers.items():
             weight = self.weights.get(name, 0)
             if weight > 0:
-                score = scorer.score(crop_image)
+                score = scorer.score(crop_image, crop_box=crop_box)
                 total_score += weight * score
 
         return float(total_score)
@@ -656,9 +678,43 @@ class CombinedScorer:
     def score_batch(
         self,
         crop_images: List[Image.Image],
+        crop_boxes: Optional[List[Tuple[int, int, int, int]]] = None,
     ) -> List[float]:
-        """Score multiple crops."""
-        return [self.score(img) for img in crop_images]
+        """Score multiple crops.
+
+        If `crop_boxes` is provided it must be parallel to `crop_images`.
+        Component scorers that implement a batched `score_batch` accepting
+        boxes (currently just GaicdCalibrationScorer) get one fast call;
+        scorers that don't fall back to per-image scoring.
+        """
+        if not crop_images:
+            return []
+
+        # Fast path: any component that can do a true batched forward + uses
+        # boxes (gaicd_cal) gets called with score_batch directly. For all
+        # other components we still loop per-image. This keeps existing
+        # VILA / LAION / Area / CLIP behavior unchanged.
+        n = len(crop_images)
+        totals = [0.0] * n
+
+        for name, scorer in self.scorers.items():
+            weight = self.weights.get(name, 0)
+            if weight <= 0:
+                continue
+            if name == "gaicd_cal" and hasattr(scorer, "score_batch"):
+                comp_scores = scorer.score_batch(crop_images, crop_boxes=crop_boxes)
+            else:
+                if crop_boxes is None:
+                    comp_scores = [scorer.score(img) for img in crop_images]
+                else:
+                    comp_scores = [
+                        scorer.score(img, crop_box=box)
+                        for img, box in zip(crop_images, crop_boxes)
+                    ]
+            for i, s in enumerate(comp_scores):
+                totals[i] += weight * float(s)
+
+        return [float(t) for t in totals]
 
 
 def create_scorer(
@@ -666,6 +722,8 @@ def create_scorer(
     device: str = "cuda",
     scorer_config: Optional[str] = None,
     require_exact_components: bool = False,
+    weights: Optional[Dict[str, float]] = None,
+    gaicd_cal_head_path: Optional[str] = None,
 ) -> CombinedScorer:
     """
     Factory function to create a scorer for a task.
@@ -673,9 +731,16 @@ def create_scorer(
     Args:
         task: Task type ('freeform', 'subject_aware', 'aspect_ratio')
         device: Device to run models on
-        scorer_config: Scorer configuration string (e.g., "vila+area")
+        scorer_config: Scorer configuration string (e.g., "vila+area",
+            "vila+area+gaicd_cal").
         require_exact_components: If True, fail instead of silently falling back
             when a requested scorer backend is unavailable.
+        weights: Optional explicit per-component weights, e.g.
+            {"vila": 0.3, "area": 0.0, "gaicd_cal": 0.7}. Only keys matching
+            components actually built (per scorer_config) are forwarded;
+            missing keys fall back to CombinedScorer's task defaults.
+        gaicd_cal_head_path: Path to the trained GAICD calibration head
+            checkpoint (.pkl). Required when "gaicd_cal" is in scorer_config.
 
     Returns:
         Combined scorer instance
@@ -709,6 +774,27 @@ def create_scorer(
     if "area" in config_parts:
         scorers["area"] = AreaScorer()
 
+    if "gaicd_cal" in config_parts:
+        # Lazy import so installs without sklearn/lightgbm/open_clip can still
+        # use vila+area scoring.
+        from .gaicd_calibration_head import GaicdCalibrationScorer
+
+        if not gaicd_cal_head_path:
+            raise ValueError(
+                "scorer_config contains 'gaicd_cal' but gaicd_cal_head_path "
+                "was not provided. Set scorer.gaicd_cal_head_path in the "
+                "config YAML or pass gaicd_cal_head_path= to create_scorer."
+            )
+        scorers["gaicd_cal"] = GaicdCalibrationScorer(
+            head_path=gaicd_cal_head_path,
+            device=device,
+        )
+
     logger.info("Scorer components initialized: %s", ", ".join(sorted(scorers.keys())))
 
-    return CombinedScorer(scorers, task=task)
+    forwarded_weights: Optional[Dict[str, float]] = None
+    if weights is not None:
+        forwarded_weights = {k: float(v) for k, v in weights.items() if k in scorers}
+        logger.info("Scorer weights (pre-normalization): %s", forwarded_weights)
+
+    return CombinedScorer(scorers, weights=forwarded_weights, task=task)

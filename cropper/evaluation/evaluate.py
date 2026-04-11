@@ -159,7 +159,7 @@ def evaluate_freeform(
             pbar.set_postfix({"IoU": f"{iou:.3f}", "Avg_IoU": f"{sum(r['iou'] for r in results)/len(results):.3f}"})
 
             # Save checkpoint periodically
-            if (idx + 1) % 50 == 0:
+            if (idx + 1) % 10 == 0:
                 _save_checkpoint(results, output_dir / "checkpoint.json")
 
         except Exception as e:

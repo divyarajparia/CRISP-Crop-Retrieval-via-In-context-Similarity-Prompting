@@ -125,6 +125,11 @@ class Cropper:
 
         elif task == "freeform":
             task_params["R"] = R
+            # Idea 1/2 flags travel to prompt_builder via task_params
+            novelty_cfg = task_config.get("novelty", {}) or {}
+            task_params["visual_grounding"] = novelty_cfg.get("visual_crop_grounding", False)
+            task_params["visual_grounding_top_k"] = task_config.get("visual_grounding_top_k", None)
+            task_params["rank_anchored"] = novelty_cfg.get("rank_anchored_refinement", False)
 
         elif task == "aspect_ratio":
             task_params["aspect_ratio"] = aspect_ratio or 1.0
@@ -134,6 +139,10 @@ class Cropper:
 #### Retieve ICL Samples ####
         # Step 1: Retrieve ICL examples
         logger.info("Step 1: Retrieving ICL examples...")
+        # Idea 4: diverse ICL selection via KMeans on top-2S CLIP retrievals
+        freeform_novelty = (task_config.get("novelty", {}) or {}) if task == "freeform" else {}
+        diverse_icl = freeform_novelty.get("diverse_icl", False)
+        diverse_k = task_config.get("diverse_icl_k", 6) if task == "freeform" else 6
         icl_examples = retrieve_icl_examples(
             query_image=query_image,
             database=self.database,
@@ -144,6 +153,8 @@ class Cropper:
             mask=mask,
             mask_center=mask_center,
             aspect_ratio=aspect_ratio,
+            diverse=diverse_icl,
+            diverse_k=diverse_k,
         )
 
         if not icl_examples:
@@ -171,15 +182,34 @@ class Cropper:
 
         # Step 3: Generate initial crop candidates
         logger.info("Step 3: Generating initial crop candidates...")
-        vlm_output = self.vlm.generate(
-            images=initial_images,
-            prompt=initial_prompt,
-            temperature=temperature,
+        multi_temp = (
+            task == "freeform"
+            and freeform_novelty.get("multi_temperature", False)
         )
+        if multi_temp:
+            temps = task_config.get("temperatures", [0.05, 0.8]) or [temperature]
+            logger.info("  Idea 3 multi-temperature sampling: %s", temps)
+            initial_crops = []
+            for t_i, temp_i in enumerate(temps):
+                vlm_output = self.vlm.generate(
+                    images=initial_images,
+                    prompt=initial_prompt,
+                    temperature=float(temp_i),
+                )
+                logger.debug("  VLM output @ T=%s: %s...", temp_i, vlm_output[:200])
+                parsed = self.vlm.parse_crops(vlm_output, task, query_image.size)
+                logger.info("    T=%s yielded %d crops", temp_i, len(parsed))
+                initial_crops.extend(parsed)
+        else:
+            vlm_output = self.vlm.generate(
+                images=initial_images,
+                prompt=initial_prompt,
+                temperature=temperature,
+            )
 
-        logger.debug(f"  VLM output: {vlm_output[:200]}...")
+            logger.debug(f"  VLM output: {vlm_output[:200]}...")
 
-        initial_crops = self.vlm.parse_crops(vlm_output, task, query_image.size)
+            initial_crops = self.vlm.parse_crops(vlm_output, task, query_image.size)
 
         if not initial_crops:
             logger.warning("Failed to parse initial crops. Using fallback.")
@@ -346,11 +376,32 @@ def create_cropper(
     # Create scorer
     task_config = config.get(task, {})
     scorer_config = task_config.get("scorer", "vila+area")
+    # Per-component weights live at the top level under `scorer:` in the YAML
+    # (configs/default.yaml:52-55). Forward them to create_scorer so the
+    # vila/area/clip/gaicd_cal mix is actually configurable instead of always
+    # defaulting to the CombinedScorer task-default of {vila:1.0, area:1.0}.
+    scorer_cfg = config.get("scorer", {}) or {}
+    scorer_weights: Optional[Dict[str, float]] = None
+    if scorer_cfg:
+        candidate = {}
+        if "vila_weight" in scorer_cfg:
+            candidate["vila"] = scorer_cfg["vila_weight"]
+        if "area_weight" in scorer_cfg:
+            candidate["area"] = scorer_cfg["area_weight"]
+        if "clip_weight" in scorer_cfg:
+            candidate["clip"] = scorer_cfg["clip_weight"]
+        if "gaicd_cal_weight" in scorer_cfg:
+            candidate["gaicd_cal"] = scorer_cfg["gaicd_cal_weight"]
+        if candidate:
+            scorer_weights = candidate
+    gaicd_cal_head_path = scorer_cfg.get("gaicd_cal_head_path") or None
     scorer = create_scorer(
         task=task,
         device=device,
         scorer_config=scorer_config,
         require_exact_components=require_exact_components,
+        weights=scorer_weights,
+        gaicd_cal_head_path=gaicd_cal_head_path,
     )
 
     # Create Cropper

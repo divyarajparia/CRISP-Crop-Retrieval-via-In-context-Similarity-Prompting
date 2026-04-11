@@ -18,7 +18,7 @@ EXP = dict(
     # --- What to run ---
     task         = "freeform",          # "freeform" | "subject_aware" | "aspect_ratio"
     max_samples  = 50,                  # None = full test set; int = quick run
-    gpu          = 0,                   # GPU index to use (0, 1, 2, ...)
+    gpu          = 1,                   # GPU index to use (0, 1, 2, ...)
 
     # --- Data ---
     data_dir     = "data",              # paperish_v2 used "data" (not "data/GAICD")
@@ -35,7 +35,7 @@ EXP = dict(
 
     # --- Output ---
     # Baseline replication of paperish_v2 (target: IoU=0.527)
-    output_dir   = "results/freeform_50samples_baseline_replicate",
+    output_dir   = "results/tp",
 
     # --- Misc ---
     seed         = 42,

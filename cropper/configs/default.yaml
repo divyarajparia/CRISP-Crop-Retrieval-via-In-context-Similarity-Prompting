@@ -10,6 +10,18 @@ freeform:
   temperature: 0.05
   scorer: "vila+area"
   coord_range: [1, 1000]   # coordinate normalization range
+  # --- novelty toggles (default OFF = baseline) ---
+  novelty:
+    visual_crop_grounding: false      # Idea 1: append cropped image alongside ICL examples
+    rank_anchored_refinement: false   # Idea 2: sort + anchor refinement on best crop
+    multi_temperature: false          # Idea 3: pool candidates from multiple temperatures
+    diverse_icl: false                # Idea 4: KMeans-cluster CLIP retrievals for diversity
+  # --- novelty hyperparams (only used when corresponding flag is on) ---
+  temperatures: [0.05, 0.8]           # Idea 3: list of temps to call generate() at
+  diverse_icl_k: 6                    # Idea 4: number of KMeans clusters (S/5 = 6 for S=30)
+  visual_grounding_top_k: 5           # Idea 1: attach crop image only to top-K ICL examples
+                                      #         (first uncapped run at top_k=all broke Mantis;
+                                      #          keeping total image count near baseline fixes it)
 
 # Subject-aware cropping settings
 subject_aware:
@@ -41,6 +53,12 @@ scorer:
   vila_weight: 1.0
   area_weight: 1.0
   clip_weight: 1.0
+  # Phase 3: GAICD calibration head. Only active when "gaicd_cal" appears in
+  # freeform.scorer (e.g. "vila+area+gaicd_cal"). The runner
+  # run_calhead_eval.py patches both the freeform.scorer string and
+  # gaicd_cal_weight at experiment time.
+  gaicd_cal_weight: 0.0
+  gaicd_cal_head_path: "cache/gaicd_cal_head.pkl"
 
 # Inference settings
 inference:

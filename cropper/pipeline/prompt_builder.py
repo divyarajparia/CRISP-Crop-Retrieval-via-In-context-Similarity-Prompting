@@ -28,6 +28,10 @@ Output {R} crops represented by (s, x1, y1, x2, y2). Only output crop tuples."""
 {crop_feedback}
 Propose similar crop that has high score. The region should be represented by (s, x1, y1, x2, y2). Only output the new crop tuples."""
 
+    FREEFORM_REFINEMENT_RANKED_TEMPLATE = """{initial_prompt}
+{crop_feedback}
+Propose {R} variations of the best crop above. Adjust the boundaries to further improve aesthetic quality. Output (s, x1, y1, x2, y2). Only output crop tuples."""
+
     SUBJECT_AWARE_INITIAL_TEMPLATE = """Find visually appealing crop. Each region is represented by (x1, y1, x2, y2) coordinates. x1, x2 are the left and right most positions, normalized into 0 to 1, where 0 is the left and 1 is the right. y1, y2 are the top and bottom positions, normalized into 0 to 1 where 0 is the top and 1 is the bottom.
 {examples}
 {query_image}, ({cx}, {cy})"""
@@ -88,7 +92,11 @@ Propose a different better crop with the given ratio. Output:"""
 
         if self.task == "freeform":
             R = task_params.get("R", 6)
-            return self._build_freeform_initial(icl_examples, query_image, R)
+            return self._build_freeform_initial(
+                icl_examples, query_image, R,
+                visual_grounding=task_params.get("visual_grounding", False),
+                visual_grounding_top_k=task_params.get("visual_grounding_top_k", None),
+            )
 
         elif self.task == "subject_aware":
             mask_center = task_params.get("mask_center", (0.5, 0.5))
@@ -136,7 +144,9 @@ Propose a different better crop with the given ratio. Output:"""
 
         if self.task == "freeform":
             return self._build_freeform_refinement(
-                initial_prompt, initial_images, crop_images, crop_coords, scores
+                initial_prompt, initial_images, crop_images, crop_coords, scores,
+                rank_anchored=task_params.get("rank_anchored", False),
+                R=task_params.get("R", 6),
             )
 
         elif self.task == "subject_aware":
@@ -159,13 +169,20 @@ Propose a different better crop with the given ratio. Output:"""
         icl_examples: List[Dict],
         query_image: Image.Image,
         R: int,
+        visual_grounding: bool = False,
+        visual_grounding_top_k: Optional[int] = None,
     ) -> Tuple[str, List[Image.Image]]:
         """Build free-form cropping initial prompt."""
         images = []
         example_lines = []
 
+        if visual_grounding:
+            # Lazy import to keep baseline path import-clean
+            from utils.coord_utils import crop_from_normalized
+
         for i, example in enumerate(icl_examples):
-            images.append(example["image"])
+            ex_image = example["image"]
+            images.append(ex_image)
 
             # Format crops as (s, x1, y1, x2, y2)
             crops = example.get("crops", [])
@@ -181,7 +198,38 @@ Propose a different better crop with the given ratio. Output:"""
                     crop_strs.append(f"(0.80, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)})")
 
             crop_str = ", ".join(crop_strs)
-            example_lines.append(f"{{image {i+1}}}, {crop_str}")
+
+            # Idea 1: visual crop grounding — append the top-1 crop image
+            # immediately after the example image, and reference it via {crop N}.
+            # Gated by visual_grounding_top_k: only the first K examples get a
+            # crop image attached, so Mantis's total image count stays near
+            # baseline density (attaching to all S=30 examples broke parsing).
+            crop_image_appended = False
+            within_top_k = (
+                visual_grounding_top_k is None or i < visual_grounding_top_k
+            )
+            if visual_grounding and crops and within_top_k:
+                try:
+                    top_crop = crops[0]
+                    if len(top_crop) == 5:
+                        top_box = tuple(top_crop[1:5])
+                    else:
+                        top_box = tuple(top_crop[:4])
+                    crop_img = crop_from_normalized(
+                        ex_image, top_box, coord_range=(1, 1000)
+                    )
+                    images.append(crop_img)
+                    crop_image_appended = True
+                except Exception as e:  # noqa: BLE001
+                    logger.warning(
+                        "visual_grounding crop extraction failed for example %d: %s — falling back",
+                        i, e,
+                    )
+
+            if crop_image_appended:
+                example_lines.append(f"{{image {i+1}}}, {{crop {i+1}}}, {crop_str}")
+            else:
+                example_lines.append(f"{{image {i+1}}}, {crop_str}")
 
         # Add query image
         images.append(query_image)
@@ -209,12 +257,44 @@ Propose a different better crop with the given ratio. Output:"""
         crop_images: List[Image.Image],
         crop_coords: List[Tuple],
         scores: List[float],
+        rank_anchored: bool = False,
+        R: int = 6,
     ) -> Tuple[str, List[Image.Image]]:
         """Build free-form cropping refinement prompt."""
         images = initial_images.copy()
 
+        if not rank_anchored:
+            feedback_lines = []
+            for i, (crop_img, coords, score) in enumerate(zip(crop_images, crop_coords, scores)):
+                images.append(crop_img)
+
+                if len(coords) == 5:
+                    mos, x1, y1, x2, y2 = coords
+                else:
+                    x1, y1, x2, y2 = coords
+                    mos = score
+
+                feedback_lines.append(
+                    f"{{Cropped image {i+1}}} ({mos:.2f}, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}), Score is {{{score:.2f}}}"
+                )
+
+            crop_feedback = "\n".join(feedback_lines)
+
+            prompt = self.FREEFORM_REFINEMENT_TEMPLATE.format(
+                initial_prompt=initial_prompt,
+                crop_feedback=crop_feedback,
+            )
+
+            return prompt, images
+
+        # --- Rank-anchored path (Idea 2) ---
+        # Sort triples by score descending and append images in sorted order
+        # so that <image> tokens line up with {Cropped image i} labels.
+        triples = list(zip(crop_images, crop_coords, scores))
+        triples.sort(key=lambda t: t[2], reverse=True)
+
         feedback_lines = []
-        for i, (crop_img, coords, score) in enumerate(zip(crop_images, crop_coords, scores)):
+        for i, (crop_img, coords, score) in enumerate(triples):
             images.append(crop_img)
 
             if len(coords) == 5:
@@ -223,15 +303,27 @@ Propose a different better crop with the given ratio. Output:"""
                 x1, y1, x2, y2 = coords
                 mos = score
 
-            feedback_lines.append(
-                f"{{Cropped image {i+1}}} ({mos:.2f}, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}), Score is {{{score:.2f}}}"
+            label = f"{{Cropped image {i+1}}}"
+            line = (
+                f"{label} ({mos:.2f}, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)}), "
+                f"Score {score:.2f}"
             )
+
+            if i == 0:
+                feedback_lines.append(f"Best crop so far — Score {score:.2f}:")
+                feedback_lines.append(line)
+                if len(triples) > 1:
+                    feedback_lines.append("")
+                    feedback_lines.append("Other candidates:")
+            else:
+                feedback_lines.append(line)
 
         crop_feedback = "\n".join(feedback_lines)
 
-        prompt = self.FREEFORM_REFINEMENT_TEMPLATE.format(
+        prompt = self.FREEFORM_REFINEMENT_RANKED_TEMPLATE.format(
             initial_prompt=initial_prompt,
             crop_feedback=crop_feedback,
+            R=R,
         )
 
         return prompt, images
@@ -422,13 +514,16 @@ def format_prompt_for_mantis(
     # Replace {image N} placeholders with <image> tokens
     formatted = text_prompt
 
-    # Replace all image references
-    for i in range(len(images)):
-        formatted = formatted.replace(f"{{image {i+1}}}", "<image>")
+    # Replace all image references. Order matters only insofar as the images
+    # list must list tensors in the same order they appear textually; the
+    # actual <image> tokens are positional in Mantis. We use a wide range so
+    # all kinds of placeholders ({image N}, {crop N}, {Cropped image N}) get
+    # substituted regardless of how many were emitted.
+    for i in range(1, 200):
+        formatted = formatted.replace(f"{{image {i}}}", "<image>")
+        formatted = formatted.replace(f"{{crop {i}}}", "<image>")
+        formatted = formatted.replace(f"{{Cropped image {i}}}", "<image>")
 
     formatted = formatted.replace("{Query image}", "<image>")
-
-    for i in range(1, 100):  # Clean up any remaining
-        formatted = formatted.replace(f"{{Cropped image {i}}}", "<image>")
 
     return formatted

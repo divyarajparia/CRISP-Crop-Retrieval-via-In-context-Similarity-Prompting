@@ -103,6 +103,7 @@ def iterative_refinement(
 
         # 1. Extract crop images
         crop_images = []
+        crop_boxes_pixel: List[Tuple[int, int, int, int]] = []
         for crop in current_crops:
             if len(crop) == 5:
                 _, x1, y1, x2, y2 = crop
@@ -111,9 +112,12 @@ def iterative_refinement(
 
             crop_img = extract_crop(query_image, (x1, y1, x2, y2))
             crop_images.append(crop_img)
+            crop_boxes_pixel.append((int(x1), int(y1), int(x2), int(y2)))
 
-        # 2. Score each crop
-        scores = scorer.score_batch(crop_images)
+        # 2. Score each crop. Pass parallel pixel-space boxes so the
+        #    GaicdCalibrationScorer can compute geometry features. Other
+        #    scorers ignore the kwarg.
+        scores = scorer.score_batch(crop_images, crop_boxes=crop_boxes_pixel)
 
         # Store iteration results
         all_iterations.append(list(current_crops))
@@ -181,6 +185,7 @@ def iterative_refinement(
 
     # Final scoring
     final_crop_images = []
+    final_crop_boxes: List[Tuple[int, int, int, int]] = []
     for crop in current_crops:
         if len(crop) == 5:
             _, x1, y1, x2, y2 = crop
@@ -188,8 +193,9 @@ def iterative_refinement(
             x1, y1, x2, y2 = crop
         crop_img = extract_crop(query_image, (x1, y1, x2, y2))
         final_crop_images.append(crop_img)
+        final_crop_boxes.append((int(x1), int(y1), int(x2), int(y2)))
 
-    final_scores = scorer.score_batch(final_crop_images)
+    final_scores = scorer.score_batch(final_crop_images, crop_boxes=final_crop_boxes)
     all_iterations.append(list(current_crops))
     all_scores.append(list(final_scores))
 

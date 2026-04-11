@@ -25,6 +25,8 @@ def retrieve_icl_examples(
     mask_center: Optional[Tuple[float, float]] = None,
     aspect_ratio: Optional[float] = None,
     exclude_ids: Optional[List[str]] = None,
+    diverse: bool = False,
+    diverse_k: int = 6,
 ) -> List[Dict]:
     """
     Retrieve in-context learning examples.
@@ -54,9 +56,18 @@ def retrieve_icl_examples(
     """
     # Step 1: Retrieve top-S images using Q (CLIP similarity)
     query_embedding = clip_retriever.encode_image(query_image)
-    top_s_results = clip_retriever.retrieve_top_s(
-        query_embedding, S, exclude_ids=exclude_ids
-    )
+    if diverse and task == "freeform":
+        # Idea 4: retrieve 2*S, then KMeans-cluster down to S for compositional diversity.
+        candidates = clip_retriever.retrieve_top_s(
+            query_embedding, 2 * S, exclude_ids=exclude_ids
+        )
+        top_s_results = _diversity_downselect(
+            candidates, clip_retriever, S, diverse_k
+        )
+    else:
+        top_s_results = clip_retriever.retrieve_top_s(
+            query_embedding, S, exclude_ids=exclude_ids
+        )
 
     retrieved_ids = [img_id for img_id, score in top_s_results]
     logger.info(f"Retrieved {len(retrieved_ids)} images for ICL")
@@ -84,6 +95,73 @@ def retrieve_icl_examples(
 
     else:
         raise ValueError(f"Unknown task: {task}")
+
+
+def _diversity_downselect(
+    candidates: List[Tuple[str, float]],
+    clip_retriever: CLIPRetriever,
+    S: int,
+    k: int,
+) -> List[Tuple[str, float]]:
+    """
+    Idea 4: KMeans-cluster the top-2S CLIP retrievals and downselect to S
+    by spreading slots across clusters. Falls back to plain top-S if sklearn
+    is unavailable, k is too small, or there aren't enough candidates.
+    """
+    if not candidates or len(candidates) <= S:
+        return candidates[:S]
+
+    k = max(2, min(k, len(candidates)))
+
+    try:
+        from sklearn.cluster import KMeans
+    except ImportError:
+        logger.warning("sklearn not available — falling back to top-S retrieval")
+        return candidates[:S]
+
+    try:
+        id_to_idx = {img_id: i for i, img_id in enumerate(clip_retriever.database_ids)}
+        embeddings = np.stack(
+            [clip_retriever.database_embeddings[id_to_idx[img_id]] for img_id, _ in candidates]
+        )
+    except (KeyError, AttributeError) as e:
+        logger.warning("diverse retrieval failed to build embedding matrix: %s — falling back", e)
+        return candidates[:S]
+
+    try:
+        labels = KMeans(n_clusters=k, random_state=42, n_init=10).fit_predict(embeddings)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("KMeans failed: %s — falling back to top-S", e)
+        return candidates[:S]
+
+    # Bucket candidate indices by cluster, preserving the (already sorted by
+    # similarity) ordering inside each bucket.
+    buckets: Dict[int, List[int]] = {}
+    for idx, label in enumerate(labels):
+        buckets.setdefault(int(label), []).append(idx)
+
+    # Round-robin pick from buckets in cluster-id order until S slots are filled.
+    selected_indices: List[int] = []
+    cluster_ids = sorted(buckets.keys())
+    while len(selected_indices) < S:
+        progressed = False
+        for cid in cluster_ids:
+            if buckets[cid]:
+                selected_indices.append(buckets[cid].pop(0))
+                progressed = True
+                if len(selected_indices) >= S:
+                    break
+        if not progressed:
+            break
+
+    selected = [candidates[i] for i in selected_indices[:S]]
+    logger.info(
+        "Diverse ICL: clustered %d candidates into %d clusters → selected %d",
+        len(candidates),
+        k,
+        len(selected),
+    )
+    return selected
 
 
 def _select_freeform_examples(
