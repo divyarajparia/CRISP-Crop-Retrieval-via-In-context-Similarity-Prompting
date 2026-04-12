@@ -176,15 +176,21 @@ Propose a different better crop with the given ratio. Output:"""
         images = []
         example_lines = []
 
+        # Lazy imports: normalize_coords maps pixel-space GT crops (as returned
+        # by GAICDDataset after the row-major fix) into the 1..1000 coordinate
+        # system the FREEFORM_INITIAL_TEMPLATE text declares to Mantis. Before
+        # this normalization the prompt showed raw pixel numbers that only
+        # coincidentally looked ~1-1000 because GAICD images are ~1024 wide.
+        from utils.coord_utils import normalize_coords
         if visual_grounding:
-            # Lazy import to keep baseline path import-clean
-            from utils.coord_utils import crop_from_normalized
+            from utils.coord_utils import extract_crop
 
         for i, example in enumerate(icl_examples):
             ex_image = example["image"]
             images.append(ex_image)
+            ex_size = ex_image.size  # (W, H) in pixels
 
-            # Format crops as (s, x1, y1, x2, y2)
+            # Format crops as (s, x1, y1, x2, y2) in 1..1000 space
             crops = example.get("crops", [])
             crop_strs = []
             for crop in crops:
@@ -192,10 +198,18 @@ Propose a different better crop with the given ratio. Output:"""
                     mos, x1, y1, x2, y2 = crop
                     # Normalize MOS to 0-1 range (GAICD uses 1-5 scale)
                     mos_norm = min(1.0, mos / 5.0) if mos > 1 else mos
-                    crop_strs.append(f"({mos_norm:.2f}, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)})")
                 elif len(crop) == 4:
                     x1, y1, x2, y2 = crop
-                    crop_strs.append(f"(0.80, {int(x1)}, {int(y1)}, {int(x2)}, {int(y2)})")
+                    mos_norm = 0.80
+                else:
+                    continue
+                xn1, yn1, xn2, yn2 = normalize_coords(
+                    (x1, y1, x2, y2), ex_size, coord_range=(1, 1000)
+                )
+                crop_strs.append(
+                    f"({mos_norm:.2f}, {int(round(xn1))}, {int(round(yn1))}, "
+                    f"{int(round(xn2))}, {int(round(yn2))})"
+                )
 
             crop_str = ", ".join(crop_strs)
 
@@ -215,9 +229,10 @@ Propose a different better crop with the given ratio. Output:"""
                         top_box = tuple(top_crop[1:5])
                     else:
                         top_box = tuple(top_crop[:4])
-                    crop_img = crop_from_normalized(
-                        ex_image, top_box, coord_range=(1, 1000)
-                    )
+                    # Crops from GAICDDataset are already in pixel space after
+                    # the row-major fix, so use extract_crop directly instead
+                    # of crop_from_normalized (which would re-denormalize them).
+                    crop_img = extract_crop(ex_image, top_box)
                     images.append(crop_img)
                     crop_image_appended = True
                 except Exception as e:  # noqa: BLE001

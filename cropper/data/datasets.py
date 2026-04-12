@@ -113,8 +113,13 @@ class GAICDDataset(Dataset):
                     for line in f:
                         parts = line.strip().split()
                         if len(parts) >= 5:
-                            # GAICD format: x1 y1 x2 y2 score
-                            x1, y1, x2, y2 = map(int, map(float, parts[0:4]))
+                            # GAICD format (MATLAB row-major): y1 x1 y2 x2 score.
+                            # Verified against upstream augmentations.py:334-335,
+                            # where horizontal flip subtracts `width` from indices
+                            # 1 and 3 — proving those are the x columns. Reading
+                            # as (x1, y1, x2, y2) silently transposes every crop
+                            # and feeds Mantis garbage ICL examples.
+                            y1, x1, y2, x2 = map(int, map(float, parts[0:4]))
                             mos = float(parts[4])
                             crops.append((mos, x1, y1, x2, y2))
             else:

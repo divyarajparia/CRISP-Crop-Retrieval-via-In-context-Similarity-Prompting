@@ -66,6 +66,9 @@ cropper/data/SACD/masks/
 cropper/data/FCDB/images/
 cropper/data/FCDB/data/
 
+# Handoff tarballs (multi-GB, too large for GitHub)
+handoff/
+
 # C/CUDA extension build outputs from bundled repos
 cropper/data/GAICD_repo/**/build/
 cropper/data/GAICD_repo/**/_ext/

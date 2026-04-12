@@ -58,6 +58,7 @@ CV_PROJECT_PYTHON = "/data1/es22btech11013/anaconda3/envs/cv_project/bin/python"
 HEAD_PATH = "cache/gaicd_cal_head.pkl"
 
 EXPERIMENTS = [
+    # Main bet: VILA anchor + learned head steers.
     dict(
         name           = "calhead_v1_30",
         output_dir     = "results/calhead_v1_30",
@@ -65,6 +66,28 @@ EXPERIMENTS = [
             vila_weight=0.3,
             area_weight=0.0,
             gaicd_cal_weight=0.7,
+        ),
+    ),
+    # Isolates the head: does VILA help, hurt, or neutral when paired
+    # with calhead? Direct VILA ablation.
+    dict(
+        name           = "calhead_pure_30",
+        output_dir     = "results/calhead_pure_30",
+        scorer_weights = dict(
+            vila_weight=0.0,
+            area_weight=0.0,
+            gaicd_cal_weight=1.0,
+        ),
+    ),
+    # Noise floor + "calhead as a light nudge on top of VILA" hypothesis.
+    # Third point of the 3-point gcal weight curve (0.3 -> 0.7 -> 1.0).
+    dict(
+        name           = "calhead_minor_30",
+        output_dir     = "results/calhead_minor_30",
+        scorer_weights = dict(
+            vila_weight=0.7,
+            area_weight=0.0,
+            gaicd_cal_weight=0.3,
         ),
     ),
 ]
