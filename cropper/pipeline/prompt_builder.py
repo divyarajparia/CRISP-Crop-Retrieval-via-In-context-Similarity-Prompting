@@ -96,6 +96,7 @@ Propose a different better crop with the given ratio. Output:"""
                 icl_examples, query_image, R,
                 visual_grounding=task_params.get("visual_grounding", False),
                 visual_grounding_top_k=task_params.get("visual_grounding_top_k", None),
+                task_params=task_params,
             )
 
         elif self.task == "subject_aware":
@@ -171,6 +172,7 @@ Propose a different better crop with the given ratio. Output:"""
         R: int,
         visual_grounding: bool = False,
         visual_grounding_top_k: Optional[int] = None,
+        task_params: Optional[Dict] = None,
     ) -> Tuple[str, List[Image.Image]]:
         """Build free-form cropping initial prompt."""
         images = []
@@ -260,6 +262,14 @@ Propose a different better crop with the given ratio. Output:"""
             examples=examples_text,
             R=R,
         )
+
+        # Idea 5: anti-bias instruction to discourage full-image crops
+        if (task_params or {}).get("anti_bias_prompt", False):
+            prompt += (
+                " The crop should focus on the most aesthetically"
+                " interesting region. It may be a sub-region of the"
+                " image, not necessarily the entire image."
+            )
 
         logger.debug("Freeform initial prompt length: %d chars", len(prompt))
 

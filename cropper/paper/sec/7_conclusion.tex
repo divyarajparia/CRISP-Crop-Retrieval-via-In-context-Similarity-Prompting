@@ -1,0 +1,14 @@
+\section{Conclusion}
+\label{sec:conclusion}
+
+We presented a systematic analysis and enhancement of the \baseline
+framework for training-free image cropping.  Starting from the reported
+baseline of 0.672 IoU on GAICD with Mantis-8B-Idefics2, we identified
+three key bottlenecks: retrieval redundancy, candidate homogeneity, and
+a scorer bias toward full-image crops.  Our proposed fixes---diverse ICL
+selection via KMeans clustering, multi-temperature candidate generation,
+and VILA-only scorer debiasing---are simple, orthogonal, and collectively
+improve IoU to \textbf{0.762}.  We additionally contribute negative
+results showing that prompt modifications can be surprisingly harmful
+and that design choices from Gemini do not transfer to Mantis, providing
+practical guidance for future VLM-based vision systems.

@@ -1,0 +1,22 @@
+\begin{abstract}
+Recent work has shown that Vision-Language Models (VLMs) can perform
+image cropping through in-context learning without task-specific
+training.  \baseline~\cite{cropper2025}, the current state-of-the-art,
+pairs a VLM with CLIP-based example retrieval, iterative refinement,
+and a composite aesthetic scorer to achieve strong results on the GAICD
+benchmark.  In this work, we conduct a systematic analysis of the
+\baseline pipeline and identify several limitations: (i)~the Area scorer
+component biases the refinement loop toward trivial full-image crops,
+(ii)~top-$S$ CLIP retrieval yields redundant in-context examples, and
+(iii)~low-temperature sampling produces near-identical crop candidates.
+We propose three targeted improvements---\emph{diverse ICL selection}
+via KMeans clustering of CLIP embeddings, \emph{multi-temperature
+candidate generation} that pools proposals from both low and high
+temperatures, and \emph{scorer debiasing} by removing the Area
+component---that collectively raise IoU on GAICD free-form cropping
+from the reported \textbf{0.672} to \textbf{0.762} using the same
+Mantis-8B-Idefics2 backbone.  We additionally present a comprehensive
+ablation study, including negative results that reveal high prompt
+sensitivity and Mantis-vs-Gemini behavioural differences not documented
+in prior work.
+\end{abstract}

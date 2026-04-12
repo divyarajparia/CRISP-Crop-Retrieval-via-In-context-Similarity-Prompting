@@ -1,0 +1,104 @@
+\section{Background: The Cropper Framework}
+\label{sec:background}
+
+We briefly review the \baseline~\cite{cropper2025} pipeline, as our
+improvements modify specific stages of this framework.  The overall
+architecture is depicted in Figure~\ref{fig:pipeline}.  The pipeline
+consists of five stages:
+
+\begin{enumerate}[leftmargin=*, labelsep=0.5em, itemsep=4pt]
+\item[\textbf{Step 1.}] \textbf{CLIP Retrieval.}
+Given a query image, \baseline retrieves the $S$ most similar training
+images from the GAICD~\cite{gaicd2020} training set using cosine
+similarity in CLIP~\cite{clip2021} ViT-B/32 embedding space.  For each
+retrieved image, the top-$T$ annotated crops (ranked by Mean Opinion
+Score, MOS) are selected as demonstrations.
+
+\item[\textbf{Step 2.}] \textbf{ICL Prompt Assembly.}
+The retrieved images and their crop annotations are interleaved into a
+multi-image prompt.  Each demonstration consists of the training image
+followed by its $T$ ground-truth crops in the format
+$(s, x_1, y_1, x_2, y_2)$, where $s$ is the MOS and coordinates are
+normalized to $[1, 1000]$.  The query image is appended with an
+instruction to generate $R$ crop candidates.
+
+\item[\textbf{Step 3.}] \textbf{VLM Generation.}
+The prompt is fed to a VLM---in our case,
+Mantis-8B-Idefics2~\cite{mantis2024}---which generates $R$ crop tuples
+at temperature~$\tau$.
+
+\item[\textbf{Step 4.}] \textbf{Iterative Refinement.}
+Over $L$ iterations, each candidate crop is extracted, scored by a
+composite scorer, and the scores are fed back to the VLM as context for
+generating improved candidates.  The final crop is the highest-scoring
+candidate across all iterations.
+
+\item[\textbf{Step 5.}] \textbf{Scoring.}
+\baseline uses a combined scorer with two components of equal weight:
+\begin{equation}
+    \text{Score} = \frac{1}{2}\,\text{VILA}(\text{crop}) + \frac{1}{2}\,\text{Area}(\text{crop}),
+    \label{eq:scorer}
+\end{equation}
+where $\text{VILA}(\cdot)$ is the VILA aesthetic quality
+predictor~\cite{vila2024} and $\text{Area}(\cdot) = \min(1, A_{\text{crop}} / A_{\text{image}})$
+is the ratio of crop area to image area.
+\end{enumerate}
+
+\paragraph{Baseline performance.}
+With Mantis-8B-Idefics2 and hyperparameters $S{=}30$, $T{=}5$,
+$R{=}6$, $L{=}2$, $\tau{=}0.05$, \baseline reports an IoU of
+\textbf{0.672} on the GAICD test set~\cite{cropper2025}.
+
+% Full-width pipeline figure
+\begin{figure*}[t]
+\centering
+\resizebox{\textwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=1.2cm and 1.6cm,
+    box/.style={draw, rounded corners, minimum height=1cm, minimum width=2.2cm,
+                align=center, font=\small},
+    newbox/.style={box, fill=blue!10, draw=blue!60, thick},
+    arrow/.style={-{Stealth[length=3mm]}, thick},
+    label/.style={font=\scriptsize\itshape, text=gray},
+]
+% Baseline nodes
+\node[box] (query) {Query\\Image};
+\node[box, right=of query] (clip) {CLIP\\Retrieval};
+\node[box, right=of clip] (prompt) {ICL Prompt\\Assembly};
+\node[box, right=of prompt] (vlm) {VLM\\Generation};
+\node[box, right=of vlm] (scorer) {Scorer};
+\node[box, right=of scorer] (output) {Final\\Crop};
+
+% Refinement loop
+\draw[arrow] (query) -- (clip);
+\draw[arrow] (clip) -- (prompt);
+\draw[arrow] (prompt) -- (vlm);
+\draw[arrow] (vlm) -- (scorer);
+\draw[arrow] (scorer) -- (output);
+\draw[arrow, dashed] (scorer.south) -- ++(0, -0.8) -| node[label, pos=0.25, below] {Refinement $\times L$} (vlm.south);
+
+% Our additions (highlighted) - pushed further down to avoid overlap
+\node[newbox, below=1.2cm of clip] (kmeans) {KMeans\\Clustering};
+\node[newbox, below=1.2cm of vlm] (multitemp) {Multi-Temp\\$\tau{=}0.05, 0.8$};
+\node[newbox, below=1.2cm of scorer] (vilaonly) {VILA-Only\\(No Area)};
+
+\draw[arrow, blue!60] (clip.south) -- (kmeans.north);
+\draw[arrow, blue!60] (kmeans.east) -| (prompt.south);
+\draw[arrow, blue!60] (multitemp.north) -- (vlm.south);
+\draw[arrow, blue!60] (vilaonly.north) -- (scorer.south);
+
+% Labels - placed below boxes to avoid clashing with arrows
+\node[font=\scriptsize\bfseries, text=blue!70, below=0.05cm of kmeans] {Ours};
+\node[font=\scriptsize\bfseries, text=blue!70, below=0.05cm of multitemp] {Ours};
+\node[font=\scriptsize\bfseries, text=blue!70, below=0.05cm of vilaonly] {Ours};
+
+\end{tikzpicture}%
+}
+\caption{\textbf{Pipeline overview.}  The \baseline baseline (top row)
+retrieves ICL examples via CLIP, assembles a multi-image prompt, and
+iteratively refines VLM-generated crops using a composite scorer.  Our
+modifications (bottom, blue) replace top-$S$ retrieval with
+KMeans-diversified selection, add multi-temperature candidate generation,
+and remove the Area scorer in favor of VILA-only scoring.}
+\label{fig:pipeline}
+\end{figure*}

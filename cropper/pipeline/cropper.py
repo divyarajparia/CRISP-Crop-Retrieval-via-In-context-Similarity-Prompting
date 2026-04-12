@@ -130,6 +130,8 @@ class Cropper:
             task_params["visual_grounding"] = novelty_cfg.get("visual_crop_grounding", False)
             task_params["visual_grounding_top_k"] = task_config.get("visual_grounding_top_k", None)
             task_params["rank_anchored"] = novelty_cfg.get("rank_anchored_refinement", False)
+            task_params["final_iter_selection"] = novelty_cfg.get("final_iter_selection", False)
+            task_params["anti_bias_prompt"] = novelty_cfg.get("anti_bias_prompt", False)
 
         elif task == "aspect_ratio":
             task_params["aspect_ratio"] = aspect_ratio or 1.0

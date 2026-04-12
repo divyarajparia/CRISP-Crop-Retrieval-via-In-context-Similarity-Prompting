@@ -1,0 +1,149 @@
+\section{Proposed Improvements}
+\label{sec:method}
+
+We propose three modifications to the \baseline pipeline, each targeting
+a specific bottleneck identified through systematic experimentation.
+All modifications are implemented as independent toggles and can be
+combined freely.
+
+% ------------------------------------------------------------------
+\subsection{Diverse ICL Selection via KMeans Clustering}
+\label{sec:diverse_icl}
+
+\baseline retrieves the top-$S$ training images by CLIP cosine
+similarity.  Because CLIP embeddings cluster tightly by visual
+semantics, this often returns near-duplicate images---\eg, ten sunset
+photographs for a sunset query---yielding ICL demonstrations that
+showcase a single compositional strategy.  The VLM, seeing repetitive
+examples, produces a correspondingly narrow distribution of crop
+candidates.
+
+We address this by diversifying the ICL set.  We first retrieve $2S$
+candidates from the CLIP index, then apply KMeans clustering
+($K = S/5$) on their CLIP embeddings to partition them into
+semantically distinct groups.  From each cluster, we select
+$S/K$ images nearest to the cluster centroid, yielding $S$ total
+examples that span a wider range of compositional strategies while
+remaining relevant to the query.
+
+This modification does not change the prompt format or VLM
+interaction---only the set of images presented as demonstrations.
+
+% ------------------------------------------------------------------
+\subsection{Multi-Temperature Candidate Generation}
+\label{sec:multitemp}
+
+At the recommended temperature $\tau = 0.05$, the VLM generates $R$
+crop candidates that are nearly identical: across our 30-image test
+set, the standard deviation of predicted $x_1$ coordinates across the
+$R$ candidates for a single image is typically below 5 pixels.  This
+means the ``generate $R$, pick the best'' paradigm degenerates into
+scoring essentially the same crop $R$ times.
+
+To inject diversity into the candidate pool, we generate crops at two
+temperatures: $\tau_{\text{low}} = 0.05$ for precise, high-confidence
+proposals, and $\tau_{\text{high}} = 0.8$ for exploratory proposals
+that may deviate from the modal prediction.  Each temperature produces
+$R$ candidates, and the union of $2R$ candidates is scored and refined
+jointly.
+
+This approach is orthogonal to prompt content---it purely expands the
+search space over which the scorer operates.
+
+% ------------------------------------------------------------------
+\subsection{Expanded Candidate Space}
+\label{sec:bigr}
+
+We increase $R$ from 6 to 10, generating 67\% more candidates per VLM
+call.  Combined with multi-temperature sampling, this yields up to 20
+candidates per refinement iteration, providing a substantially wider
+search space for the scorer.  While the original paper~\cite{cropper2025}
+reports diminishing returns beyond $R = 5$, this finding was obtained
+under single-temperature generation where all candidates are
+near-identical.  With diverse generation, additional candidates are
+more likely to be genuinely different, improving the returns to
+larger~$R$.
+
+% ------------------------------------------------------------------
+\subsection{Scorer Debiasing: VILA-Only Scoring}
+\label{sec:scorer_debias}
+
+The Area scorer in Eq.~\eqref{eq:scorer} assigns
+$\text{Area}(\text{crop}) = A_{\text{crop}} / A_{\text{image}}$, which
+monotonically increases with crop size and achieves its maximum
+(\ie, 1.0) at the full image.  During iterative refinement, this
+creates a positive feedback loop: larger crops receive higher composite
+scores, the VLM sees ``large crop scored well'' in the refinement
+context, and responds by generating still-larger crops.  We observe
+that 90\% of baseline predictions converge to crops covering
+$> 95\%$ of the image area.
+
+We resolve this by removing the Area component entirely and scoring
+with VILA alone:
+\begin{equation}
+    \text{Score}_{\text{ours}} = \text{VILA}(\text{crop}).
+    \label{eq:scorer_ours}
+\end{equation}
+VILA evaluates aesthetic quality independent of crop size, breaking the
+degenerate feedback loop.
+
+% ------------------------------------------------------------------
+\subsection{GAICD Calibration Head}
+\label{sec:calhead}
+
+As an additional experiment, we train a lightweight calibration head
+that provides a dataset-specific aesthetic signal.  We extract 768-dimensional
+features from CLIP ViT-L/14~\cite{clip2021} for each of the ${\sim}288$K
+annotated crops in the GAICD training set, and concatenate 6 geometry
+features (normalized box coordinates, aspect ratio, area ratio) to form a
+774-dimensional input.  A two-layer MLP ($774 \to 256 \to 1$) is trained
+to predict MOS via ridge regression.  The calibration head is added as
+a third scorer component alongside VILA.
+
+% ------------------------------------------------------------------
+
+% Feedback loop figure
+\begin{figure}[t]
+\centering
+\resizebox{\columnwidth}{!}{%
+\begin{tikzpicture}[
+    node distance=0.8cm,
+    box/.style={draw, rounded corners, minimum height=0.8cm, minimum width=2.0cm,
+                align=center, font=\small},
+    badbox/.style={box, fill=red!10, draw=red!60},
+    goodbox/.style={box, fill=green!10, draw=green!50!black},
+    arrow/.style={-{Stealth[length=2.5mm]}, thick},
+]
+% Bad loop (left)
+\node[font=\small\bfseries] (title_bad) {Area Scorer (Baseline)};
+\node[badbox, below=0.4cm of title_bad] (vlm1) {VLM generates\\crop candidates};
+\node[badbox, below=of vlm1] (area) {Area scorer:\\bigger $=$ better};
+\node[badbox, below=of area] (feedback1) {Feedback:\\``big crop scored 0.9''};
+\node[badbox, below=of feedback1] (converge) {Converge to\\full image};
+
+\draw[arrow] (vlm1) -- (area);
+\draw[arrow] (area) -- (feedback1);
+\draw[arrow] (feedback1) -- (converge);
+\draw[arrow, dashed, red!60] (feedback1.west) -- ++(-0.6, 0) |- (vlm1.west);
+
+% Good loop (right)
+\node[font=\small\bfseries, right=3.5cm of title_bad] (title_good) {VILA-Only (Ours)};
+\node[goodbox, below=0.4cm of title_good] (vlm2) {VLM generates\\crop candidates};
+\node[goodbox, below=of vlm2] (vila) {VILA scorer:\\aesthetic quality};
+\node[goodbox, below=of vila] (feedback2) {Feedback:\\varied scores};
+\node[goodbox, below=of feedback2] (diverse) {Meaningful\\refinement};
+
+\draw[arrow] (vlm2) -- (vila);
+\draw[arrow] (vila) -- (feedback2);
+\draw[arrow] (feedback2) -- (diverse);
+\draw[arrow, dashed, green!50!black] (feedback2.east) -- ++(0.6, 0) |- (vlm2.east);
+
+\end{tikzpicture}%
+}
+\caption{\textbf{Scorer feedback loops.}  \emph{Left:} The Area scorer
+creates a degenerate cycle where the refinement loop converges to
+full-image crops.  \emph{Right:} VILA-only scoring provides
+size-independent aesthetic feedback, enabling meaningful iterative
+refinement.}
+\label{fig:feedback_loop}
+\end{figure}

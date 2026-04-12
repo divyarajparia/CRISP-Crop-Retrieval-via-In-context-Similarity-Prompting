@@ -1,0 +1,82 @@
+\section{Introduction}
+\label{sec:intro}
+
+Automatic image cropping---selecting the most aesthetically pleasing
+sub-region of a photograph---is a long-standing problem in computational
+photography.  Classical approaches rely on hand-crafted saliency maps or
+composition rules~\cite{cgs2017}, while recent learning-based methods
+train dedicated networks on human-annotated crop
+datasets~\cite{gaic2019, a2rl2018, gaicd2020}.  A limitation shared by
+all such methods is their dependence on task-specific training data and
+the associated cost of data collection and annotation.
+
+\baseline~\cite{cropper2025} introduced a compelling alternative:
+\emph{training-free} image cropping through in-context learning (ICL)
+with Vision-Language Models (VLMs).  By retrieving aesthetically
+annotated examples from a training set via CLIP similarity and
+presenting them as interleaved image--text demonstrations, \baseline
+guides a VLM to output crop coordinates for a new query image.  An
+iterative refinement loop, steered by a composite scorer (VILA
+aesthetic~\cite{vila2024} + Area coverage), progressively improves
+the crop over multiple rounds.  On the GAICD benchmark~\cite{gaicd2020},
+\baseline achieves an IoU of \textbf{0.672} with the open-source
+Mantis-8B-Idefics2~\cite{mantis2024} backbone.
+
+However, \baseline was primarily developed and tuned for Gemini 1.5
+Pro~\cite{gemini2024}, a substantially more capable (closed-source) VLM.
+Its design choices---retrieval strategy, temperature setting, scorer
+composition---were validated on Gemini and applied to Mantis without
+adaptation.  We find that this leaves significant performance on the
+table, particularly for a smaller model like Mantis that benefits from
+more diverse demonstrations, broader candidate search, and less biased
+scoring feedback.
+
+We identify three specific limitations:
+
+\begin{enumerate}
+    \item \textbf{Retrieval redundancy.}  Top-$S$ CLIP retrieval often
+    returns semantically near-duplicate images (\eg, ten sunset
+    photographs for a sunset query), producing narrow ICL
+    demonstrations that fail to expose the VLM to diverse aesthetic
+    strategies (Sec.~\ref{sec:diverse_icl}).
+
+    \item \textbf{Candidate homogeneity.}  At the recommended
+    temperature of $0.05$, the VLM outputs $R$ crop candidates that
+    are nearly identical (coordinate standard deviation $< 5$\,px),
+    rendering the ``generate $R$, pick the best'' paradigm largely
+    ineffective (Sec.~\ref{sec:multitemp}).
+
+    \item \textbf{Scorer bias.}  The Area scorer component assigns
+    $\text{score} = \text{crop\_area} / \text{image\_area}$, which
+    monotonically rewards larger crops and, through the refinement
+    feedback loop, drives the system toward near-full-image predictions
+    (Sec.~\ref{sec:scorer_debias}).
+\end{enumerate}
+
+We address these limitations with three targeted modifications:
+\emph{diverse ICL selection} via KMeans clustering of CLIP embeddings,
+\emph{multi-temperature candidate generation} that unions proposals from
+$T{=}0.05$ and $T{=}0.8$, and \emph{scorer debiasing} by dropping the
+Area component in favor of VILA-only scoring.  Each improvement is
+orthogonal and can be toggled independently.  These modifications are
+particularly impactful for open-source VLMs like Mantis, which---unlike
+Gemini---lack the capacity to compensate for suboptimal pipeline design
+through sheer model capability.
+
+Our contributions are:
+\begin{itemize}
+    \item Three complementary improvements---diverse ICL retrieval,
+    multi-temperature candidate generation, and scorer
+    debiasing---that independently and jointly improve cropping
+    performance with open-source VLMs.
+    \item Comprehensive ablations, including analysis of prompt
+    sensitivity (a single instruction sentence \emph{decreases} IoU by
+    0.036) and Gemini-vs-Mantis design transfer failures, providing
+    practical guidance for VLM-based vision systems.
+    \item State-of-the-art IoU on GAICD free-form cropping with
+    Mantis-8B, improving from 0.672 to \textbf{0.762}.
+    \item A diagnostic analysis revealing that \baseline's Area scorer
+    causes the refinement loop to converge to near-full-image crops on
+    a large fraction of test images, limiting the effectiveness of
+    iterative refinement.
+\end{itemize}

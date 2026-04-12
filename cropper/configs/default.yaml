@@ -16,6 +16,8 @@ freeform:
     rank_anchored_refinement: false   # Idea 2: sort + anchor refinement on best crop
     multi_temperature: false          # Idea 3: pool candidates from multiple temperatures
     diverse_icl: false                # Idea 4: KMeans-cluster CLIP retrievals for diversity
+    anti_bias_prompt: false            # Idea 5: tell VLM crops may be sub-regions
+    final_iter_selection: false        # Idea 6: select best crop from final iter only (paper default)
   # --- novelty hyperparams (only used when corresponding flag is on) ---
   temperatures: [0.05, 0.8]           # Idea 3: list of temps to call generate() at
   diverse_icl_k: 6                    # Idea 4: number of KMeans clusters (S/5 = 6 for S=30)

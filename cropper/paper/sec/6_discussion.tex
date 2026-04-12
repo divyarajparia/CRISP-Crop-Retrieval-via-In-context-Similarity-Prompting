@@ -1,0 +1,49 @@
+\section{Discussion}
+\label{sec:discussion}
+
+\paragraph{Bridging the open-source gap.}
+\baseline~\cite{cropper2025} was primarily developed and evaluated on
+Gemini 1.5 Pro~\cite{gemini2024}, a large closed-source VLM with
+substantially greater capacity than open-source alternatives.  Most of
+the paper's design decisions---retrieval strategy, single-temperature
+generation, scorer composition, and selection strategy---were tuned on
+Gemini and transferred to Mantis without modification.  A more capable
+VLM like Gemini can compensate for suboptimal pipeline choices through
+sheer model capacity: it may produce diverse candidates even at low
+temperature, or generate meaningful crops despite redundant ICL
+examples.  Mantis, being a smaller 8B-parameter model, lacks this
+compensating capacity.  Our contributions---diverse retrieval,
+multi-temperature sampling, expanded candidate space, and scorer
+debiasing---specifically address the bottlenecks that emerge when using
+a less capable, open-source VLM.  We believe this makes our
+improvements particularly relevant for practical deployment, where
+open-source models are often preferred for cost, privacy, and
+reproducibility reasons.
+
+\paragraph{What transfers across VLMs and what does not.}
+Our experiments reveal that several design choices validated on Gemini
+do not hold for Mantis.  Final-iteration selection, which improves
+Gemini by +0.034 IoU, has no effect on Mantis.  Adding a single
+instruction sentence to the prompt causes a -0.041 IoU drop on
+Mantis---a level of prompt sensitivity unlikely to occur with a larger
+model.  This highlights a broader concern for VLM-based vision
+pipelines: \emph{design choices must be validated per-model}, especially
+when transferring from closed-source to open-source backbones.
+
+\paragraph{The refinement paradox.}
+Iterative refinement is presented as a core contribution of
+\baseline~\cite{cropper2025}: by feeding scorer outputs back to the
+VLM, the system should progressively improve its crops.  In practice,
+we observe that the VLM frequently produces unparseable output during
+refinement iterations, and that increasing iterations from $L{=}2$ to
+$L{=}4$ yields only marginal gains.  This suggests that for smaller
+VLMs, single-pass candidate generation with better diversity
+(multi-temperature, larger $R$) may be more effective than iterative
+refinement.
+
+\paragraph{Limitations.}
+Our improvements reduce the large-crop bias but do not eliminate it:
+the VLM still tends toward larger crops, especially on images where the
+GT crop is a focused sub-region.  Our modifications have been validated
+only on Mantis-8B-Idefics2; we expect similar or larger gains on other
+open-source VLMs of comparable scale, but this remains to be tested.

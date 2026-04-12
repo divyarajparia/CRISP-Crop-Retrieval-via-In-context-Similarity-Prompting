@@ -1,0 +1,33 @@
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Image cropping.}
+Automatic image cropping has evolved from rule-based composition
+heuristics~\cite{cgs2017} through reinforcement
+learning~\cite{a2rl2018} to fully supervised approaches trained on
+large-scale human annotations~\cite{gaic2019, gaicd2020}.  While
+effective, these methods require task-specific training and do not
+generalize easily across datasets or cropping objectives.
+\baseline~\cite{cropper2025} circumvents this limitation entirely by
+using VLM in-context learning, achieving competitive results without any
+gradient updates.
+
+\paragraph{Vision-Language Models and ICL.}
+Large VLMs such as Gemini~\cite{gemini2024},
+Mantis~\cite{mantis2024}, and Idefics2~\cite{idefics2} have
+demonstrated strong multi-image understanding through interleaved
+image--text prompting.  In-context learning---providing task
+demonstrations at inference time---has become a standard paradigm for
+adapting these models to new tasks without fine-tuning.  \baseline
+exploits this by retrieving CLIP-similar training images with annotated
+crops and presenting them as ICL demonstrations.
+
+\paragraph{Aesthetic scoring.}
+VILA~\cite{vila2024} learns image aesthetics from user comments via
+vision-language pretraining and provides a scalar aesthetic quality
+score.  \baseline combines VILA with a heuristic Area scorer to evaluate
+crop candidates.  The LAION aesthetic predictor~\cite{laion_aes2022}
+offers an alternative lightweight aesthetic score.  In this work, we
+examine the interaction between scorer design and iterative refinement,
+showing that the Area component introduces a systematic bias that
+undermines the refinement loop.
